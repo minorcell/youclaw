@@ -1,0 +1,121 @@
+import { Clock3, FolderCode, Hammer, ShieldAlert } from "lucide-react"
+
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import type { RunViewState } from "@/lib/types"
+
+interface TimelinePanelProps {
+  run: RunViewState | null
+  onResolveApproval: (approvalId: string, approved: boolean) => void
+}
+
+export function TimelinePanel({ run, onResolveApproval }: TimelinePanelProps) {
+  return (
+    <Card className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-border/70 p-5">
+        <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
+          Tool Timeline
+        </p>
+        <h2 className="mt-2 text-xl font-semibold">
+          {run ? `Run ${run.run.id.slice(0, 8)}` : "No active run"}
+        </h2>
+      </div>
+      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        {run ? (
+          run.timeline.map((item) => (
+            <Card className="p-4" key={item.id}>
+              {item.kind === "step" ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Clock3 className="h-4 w-4 text-muted-foreground" />
+                    <Badge>step {item.step}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {item.status}
+                    </span>
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-muted-foreground">
+                    {item.outputText || "Waiting for model output..."}
+                  </pre>
+                  {item.usage ? (
+                    <p className="text-xs text-muted-foreground">
+                      tokens: {item.usage.input_tokens}/
+                      {item.usage.output_tokens}/{item.usage.total_tokens}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FolderCode className="h-4 w-4 text-muted-foreground" />
+                    <Badge>{item.toolCall.tool_name}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      step {item.step}
+                    </span>
+                  </div>
+                  <pre className="overflow-x-auto rounded-2xl bg-secondary/60 p-3 text-[11px] leading-5 text-secondary-foreground">
+                    {JSON.stringify(item.toolCall.args_json, null, 2)}
+                  </pre>
+                  {item.approval ? (
+                    <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-4">
+                      <div className="flex items-center gap-2 text-amber-900">
+                        <ShieldAlert className="h-4 w-4" />
+                        <span className="text-sm font-medium">
+                          Write approval required
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-amber-900">
+                        {item.approval.path}
+                      </p>
+                      <pre className="mt-3 max-h-48 overflow-auto rounded-2xl bg-white/70 p-3 text-[11px] leading-5 text-amber-950">
+                        {item.approval.preview_json.diff ?? "No diff preview"}
+                      </pre>
+                      {item.approval.status === "pending" ? (
+                        <div className="mt-3 flex gap-2">
+                          <Button
+                            onClick={() =>
+                              onResolveApproval(item.approval!.id, true)
+                            }
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            onClick={() =>
+                              onResolveApproval(item.approval!.id, false)
+                            }
+                            variant="secondary"
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-xs font-medium uppercase tracking-[0.18em] text-amber-900">
+                          {item.approval.status}
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+                  {item.toolResult ? (
+                    <div>
+                      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <Hammer className="h-4 w-4" />
+                        {item.durationMs ? `${item.durationMs} ms` : "finished"}
+                      </div>
+                      <pre className="overflow-x-auto rounded-2xl bg-secondary/60 p-3 text-[11px] leading-5 text-secondary-foreground">
+                        {JSON.stringify(item.toolResult.output_json, null, 2)}
+                      </pre>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </Card>
+          ))
+        ) : (
+          <Card className="p-5 text-sm text-muted-foreground">
+            发起一次对话后，这里会显示 step、tool 调用和写文件审批。
+          </Card>
+        )}
+      </div>
+    </Card>
+  )
+}
