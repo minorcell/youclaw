@@ -118,11 +118,22 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       resetSettingsUiState()
       return
     }
-    if (selectedProviderId === "new") {
-      return
-    }
+
     if (providerAccounts.length === 0) {
       setSelectedProviderId("new")
+      return
+    }
+
+    if (selectedProviderId === "new") {
+      setSelectedProviderId(providerAccounts[0].id)
+      return
+    }
+
+    const hasSelectedProvider = providerAccounts.some(
+      (provider) => provider.id === selectedProviderId,
+    )
+    if (!hasSelectedProvider) {
+      setSelectedProviderId(providerAccounts[0].id)
     }
   }, [
     open,

@@ -19,7 +19,7 @@ interface ProviderFormProps {
   onSubmit: (value: ProviderFormValue) => Promise<void>
 }
 
-const DEFAULT_PROVIDER_BASE_URL = "https://api.deepseek.com/v1"
+const DEFAULT_PROVIDER_BASE_URL = "https://api.deepseek.com"
 
 function normalizeFormValue(value: ProviderFormValue): ProviderFormValue {
   return {
@@ -138,6 +138,11 @@ export function ProviderForm({
           required
           value={form.base_url}
         />
+        {!showBaseUrlError ? (
+          <p className="text-xs text-muted-foreground">
+            填写服务商根地址，例如 `https://api.deepseek.com`（通常无需手动追加 `/v1`）。
+          </p>
+        ) : null}
         {showBaseUrlError ? (
           <p className="text-xs text-destructive">
             请输入完整地址，需以 `http://` 或 `https://` 开头。

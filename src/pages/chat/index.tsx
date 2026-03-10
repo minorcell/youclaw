@@ -6,7 +6,7 @@ import { MessageThread } from "@/pages/chat/components/message-thread"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { getAppClient } from "@/lib/app-client"
-import { partsToText } from "@/lib/parts"
+import { partsToOutputText } from "@/lib/parts"
 import { flattenProviderProfiles } from "@/lib/provider-profiles"
 import type { ProviderProfile, RunViewState, TimelineItem } from "@/lib/types"
 import { useAppStore } from "@/store/app-store"
@@ -71,6 +71,7 @@ export function ChatPage() {
         step: item.step,
         status: item.status,
         outputText: item.outputText,
+        reasoningText: item.reasoningText,
       }))
       .sort((left, right) => left.step - right.step)
   }, [activeRun])
@@ -86,7 +87,7 @@ export function ChatPage() {
         return true
       }
 
-      const normalizedMessageText = partsToText(message.parts_json)
+      const normalizedMessageText = partsToOutputText(message.parts_json)
         .replace(/\s+/g, " ")
         .trim()
 
@@ -149,7 +150,9 @@ export function ChatPage() {
   }, [currentMessageCount, userScrolledUp, messages.length])
 
   // 当 runSteps 变化时（流式输出），如果用户没有上滑，自动滚动到底部
-  const currentRunStepsText = runSteps.map((s) => s.outputText).join("")
+  const currentRunStepsText = runSteps
+    .map((s) => `${s.reasoningText}\n${s.outputText}`)
+    .join("")
   useEffect(() => {
     const container = scrollContainerRef.current
     if (!container) return
@@ -203,21 +206,23 @@ export function ChatPage() {
       <div className="relative flex-1 min-h-0">
         <div
           ref={scrollContainerRef}
-          className="h-full select-text overflow-y-auto px-6 pb-72 pt-8 md:px-[9%]"
+          className="h-full select-none overflow-y-auto px-6 pb-72 pt-8 md:px-[9%]"
         >
-          <MessageThread
-            error={activeRun?.error}
-            messages={renderMessages}
-            providerLabel={
-              activeProvider
-                ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
-                : "BgtClaw Agent"
-            }
-            runSteps={runSteps}
-          />
+          <div className="select-text">
+            <MessageThread
+              error={activeRun?.error}
+              messages={renderMessages}
+              providerLabel={
+                activeProvider
+                  ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
+                  : "BgtClaw Agent"
+              }
+              runSteps={runSteps}
+            />
+          </div>
 
           {pendingApprovals.length > 0 ? (
-            <div className="mt-6 space-y-3">
+            <div className="mt-6 space-y-3 select-text">
               {pendingApprovals.map((approval) => (
                 <Card
                   className="max-w-[76ch] rounded-2xl border-border/70 bg-card/80 px-4 py-3 shadow-none"
@@ -259,7 +264,7 @@ export function ChatPage() {
         </div>
 
         <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-4">
-          <div className="pointer-events-auto w-full max-w-210 select-text">
+          <div className="pointer-events-auto w-full max-w-210 select-none">
             <ChatComposer
               input={input}
               onBindProvider={(id) => void handleBindProvider(id)}

@@ -56,8 +56,14 @@ export interface ChatSession {
 
 export type ContentPart =
   | { Text: string }
+  | { Reasoning: ReasoningPart }
   | { ToolCall: ToolCall }
   | { ToolResult: ToolResult }
+
+export interface ReasoningPart {
+  text: string
+  provider_metadata?: Record<string, unknown>
+}
 
 export interface ChatMessage {
   id: string
@@ -100,6 +106,7 @@ export interface ChatRun {
 export interface Usage {
   input_tokens: number
   output_tokens: number
+  reasoning_tokens: number
   total_tokens: number
 }
 
@@ -118,6 +125,8 @@ export interface ToolResult {
 export interface AgentStep {
   step: number
   output_text: string
+  reasoning_text: string
+  reasoning_parts: ReasoningPart[]
   finish_reason: string
   usage: Usage
   tool_calls: ToolCall[]
@@ -155,6 +164,31 @@ export interface TokenPayload {
   run_id: string
   step: number
   text: string
+}
+
+export interface ReasoningStartedPayload {
+  session_id: string
+  run_id: string
+  step: number
+  block_id: string
+  provider_metadata?: Record<string, unknown>
+}
+
+export interface ReasoningTokenPayload {
+  session_id: string
+  run_id: string
+  step: number
+  block_id: string
+  text: string
+  provider_metadata?: Record<string, unknown>
+}
+
+export interface ReasoningFinishedPayload {
+  session_id: string
+  run_id: string
+  step: number
+  block_id: string
+  provider_metadata?: Record<string, unknown>
 }
 
 export interface StepStartedPayload {
@@ -212,6 +246,7 @@ export type TimelineItem =
       step: number
       status: "started" | "finished"
       outputText: string
+      reasoningText: string
       usage?: Usage
     }
   | {

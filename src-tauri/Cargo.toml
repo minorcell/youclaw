@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-aquaregia = { path = "/Users/mcell/Desktop/agents/aquaregia" }
+aquaregia = { path = "/Users/mcell/Desktop/agents/rs-agent/aquaregia" }
 axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"

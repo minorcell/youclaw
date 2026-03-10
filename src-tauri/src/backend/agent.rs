@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -6,7 +6,7 @@ use std::time::Instant;
 use aquaregia::tool::{Tool, ToolExecError};
 use aquaregia::{
     AgentStep, ContentPart, ErrorCode, FinishReason, GenerateTextRequest, LlmClient, Message,
-    MessageRole, StreamEvent, ToolCall, ToolResult, Usage,
+    MessageRole, ReasoningPart, StreamEvent, ToolCall, ToolResult, Usage,
 };
 use futures_util::StreamExt;
 use serde_json::json;
@@ -15,8 +15,8 @@ use crate::backend::errors::{AppError, AppResult};
 use crate::backend::filesystem::{build_filesystem_tool, FilesystemToolContext};
 use crate::backend::models::{
     title_from_first_prompt, ChatRun, RunCancelledPayload, RunFailedPayload, RunFinishedPayload,
-    RunStartedPayload, StepFinishedPayload, StepStartedPayload, TokenPayload, ToolFinishedPayload,
-    ToolRequestedPayload,
+    ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload, RunStartedPayload,
+    StepFinishedPayload, StepStartedPayload, TokenPayload, ToolFinishedPayload, ToolRequestedPayload,
 };
 use crate::backend::BackendState;
 
@@ -147,6 +147,9 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
         };
 
         let mut step_text = String::new();
+        let mut step_reasoning_text = String::new();
+        let mut step_reasoning_parts = Vec::<ReasoningPart>::new();
+        let mut reasoning_part_index_by_block = HashMap::<String, usize>::new();
         let mut step_usage = Usage::default();
         let mut step_tool_calls = Vec::<ToolCall>::new();
 
@@ -160,6 +163,90 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
             };
 
             match event {
+                StreamEvent::ReasoningStarted {
+                    block_id,
+                    provider_metadata,
+                } => {
+                    let block_id_for_map = block_id.clone();
+                    let part_index = step_reasoning_parts.len();
+                    step_reasoning_parts.push(ReasoningPart {
+                        text: String::new(),
+                        provider_metadata: provider_metadata.clone(),
+                    });
+                    reasoning_part_index_by_block.insert(block_id_for_map, part_index);
+                    state.ws_hub.emit_run_event(
+                        &run.id,
+                        "chat.reasoning.started",
+                        ReasoningStartedPayload {
+                            session_id: run.session_id.clone(),
+                            run_id: run.id.clone(),
+                            step,
+                            block_id,
+                            provider_metadata,
+                        },
+                    )?;
+                }
+                StreamEvent::ReasoningDelta {
+                    block_id,
+                    text,
+                    provider_metadata,
+                } => {
+                    if !text.is_empty() {
+                        step_reasoning_text.push_str(&text);
+                    }
+                    if let Some(index) = reasoning_part_index_by_block.get(&block_id).copied() {
+                        if let Some(part) = step_reasoning_parts.get_mut(index) {
+                            if !text.is_empty() {
+                                part.text.push_str(&text);
+                            }
+                            if provider_metadata.is_some() {
+                                part.provider_metadata = provider_metadata.clone();
+                            }
+                        }
+                    } else {
+                        let part_index = step_reasoning_parts.len();
+                        step_reasoning_parts.push(ReasoningPart {
+                            text: text.clone(),
+                            provider_metadata: provider_metadata.clone(),
+                        });
+                        reasoning_part_index_by_block.insert(block_id.clone(), part_index);
+                    }
+                    state.ws_hub.emit_run_event(
+                        &run.id,
+                        "chat.reasoning.token",
+                        ReasoningTokenPayload {
+                            session_id: run.session_id.clone(),
+                            run_id: run.id.clone(),
+                            step,
+                            block_id,
+                            text,
+                            provider_metadata,
+                        },
+                    )?;
+                }
+                StreamEvent::ReasoningDone {
+                    block_id,
+                    provider_metadata,
+                } => {
+                    if let Some(index) = reasoning_part_index_by_block.remove(&block_id) {
+                        if let Some(part) = step_reasoning_parts.get_mut(index) {
+                            if provider_metadata.is_some() {
+                                part.provider_metadata = provider_metadata.clone();
+                            }
+                        }
+                    }
+                    state.ws_hub.emit_run_event(
+                        &run.id,
+                        "chat.reasoning.finished",
+                        ReasoningFinishedPayload {
+                            session_id: run.session_id.clone(),
+                            run_id: run.id.clone(),
+                            step,
+                            block_id,
+                            provider_metadata,
+                        },
+                    )?;
+                }
                 StreamEvent::TextDelta { text } => {
                     if !text.is_empty() {
                         step_text.push_str(&text);
@@ -202,13 +289,16 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
 
         usage_total += step_usage.clone();
 
-        let assistant_message = make_assistant_message(&step_text, &step_tool_calls)?;
+        let assistant_message =
+            make_assistant_message(&step_reasoning_parts, &step_text, &step_tool_calls)?;
         messages.push(assistant_message);
 
         if step_tool_calls.is_empty() {
             let step_state = AgentStep {
                 step,
                 output_text: step_text.clone(),
+                reasoning_text: step_reasoning_text.clone(),
+                reasoning_parts: step_reasoning_parts.clone(),
                 finish_reason: FinishReason::Stop,
                 usage: step_usage,
                 tool_calls: Vec::new(),
@@ -251,6 +341,8 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
         let step_state = AgentStep {
             step,
             output_text: step_text,
+            reasoning_text: step_reasoning_text,
+            reasoning_parts: step_reasoning_parts,
             finish_reason: FinishReason::ToolCalls,
             usage: step_usage,
             tool_calls: step_tool_calls,
@@ -304,8 +396,15 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
     Ok(())
 }
 
-fn make_assistant_message(text: &str, tool_calls: &[ToolCall]) -> AppResult<Message> {
+fn make_assistant_message(
+    reasoning_parts: &[ReasoningPart],
+    text: &str,
+    tool_calls: &[ToolCall],
+) -> AppResult<Message> {
     let mut parts = Vec::new();
+    for reasoning in reasoning_parts {
+        parts.push(ContentPart::Reasoning(reasoning.clone()));
+    }
     if !text.is_empty() {
         parts.push(ContentPart::Text(text.to_string()));
     }

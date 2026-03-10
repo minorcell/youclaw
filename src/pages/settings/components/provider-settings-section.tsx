@@ -288,7 +288,7 @@ export function ProviderSettingsSection({
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-3 py-4">
+        <CardContent className="space-y-3 py-2">
           {isCreatingNew ? (
             <div className="rounded-xl border border-border bg-accent/35 px-3 py-2 text-sm text-foreground">
               正在创建新服务商。填写首个模型后可一次完成创建。
@@ -356,14 +356,8 @@ export function ProviderSettingsSection({
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-6 py-4">
+        <CardContent className="space-y-6 py-2">
           <div className="space-y-4">
-            <div>
-              <p className="text-base font-medium">服务商连接</p>
-              <p className="text-sm text-muted-foreground">
-                该账号下所有模型会共享 Base URL 与 API Key。
-              </p>
-            </div>
             <ProviderForm
               busy={accountBusy}
               initialValue={selectedProvider}

@@ -286,6 +286,37 @@ pub struct TokenPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningStartedPayload {
+    pub session_id: String,
+    pub run_id: String,
+    pub step: u8,
+    pub block_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningTokenPayload {
+    pub session_id: String,
+    pub run_id: String,
+    pub step: u8,
+    pub block_id: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningFinishedPayload {
+    pub session_id: String,
+    pub run_id: String,
+    pub step: u8,
+    pub block_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStartedPayload {
     pub session_id: String,
     pub run_id: String,

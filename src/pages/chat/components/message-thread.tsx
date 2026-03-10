@@ -3,7 +3,7 @@ import { Bot, TriangleAlert } from "lucide-react"
 import { Streamdown } from "streamdown"
 
 import { Card } from "@/components/ui/card"
-import { partsToText, visibleMessages } from "@/lib/parts"
+import { partsToOutputText, reasoningParts, visibleMessages } from "@/lib/parts"
 import type { ChatMessage } from "@/lib/types"
 
 const streamdownPlugins = { code }
@@ -15,6 +15,7 @@ interface MessageThreadProps {
     step: number
     status: "started" | "finished"
     outputText: string
+    reasoningText: string
   }>
   error?: string
 }
@@ -31,6 +32,22 @@ export function MessageThread({
     <div className="space-y-6">
       {items.map((message) => {
         const isUser = message.role === "user"
+        const outputText = partsToOutputText(message.parts_json)
+        const reasoningText = reasoningParts(message.parts_json)
+          .map((part) => {
+            if (part.text) return part.text
+            const anthropic = part.provider_metadata?.anthropic as
+              | { redacted_data?: unknown }
+              | undefined
+            if (anthropic?.redacted_data) {
+              return "[reasoning redacted by provider]"
+            }
+            return ""
+          })
+          .join("")
+        const toolSummary = message.parts_json
+          .flatMap((part) => ("ToolCall" in part ? [`[tool:${part.ToolCall.tool_name}]`] : []))
+          .join("\n")
 
         if (isUser) {
           return (
@@ -41,7 +58,7 @@ export function MessageThread({
                 mode="static"
                 plugins={streamdownPlugins}
               >
-                {partsToText(message.parts_json)}
+                {outputText}
               </Streamdown>
             </div>
           )
@@ -53,13 +70,28 @@ export function MessageThread({
               <Bot className="h-4 w-4" />
               <span className="font-medium">{providerLabel}</span>
             </div>
+            {reasoningText ? (
+              <details className="mb-3 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm">
+                <summary className="cursor-pointer text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  Model reasoning
+                </summary>
+                <Streamdown
+                  className="mt-3 text-sm leading-7 text-muted-foreground"
+                  controls={false}
+                  mode="static"
+                  plugins={streamdownPlugins}
+                >
+                  {reasoningText}
+                </Streamdown>
+              </details>
+            ) : null}
             <Streamdown
               className="text-base leading-8 text-foreground"
               controls={false}
               mode="static"
               plugins={streamdownPlugins}
             >
-              {partsToText(message.parts_json)}
+              {outputText || toolSummary}
             </Streamdown>
           </article>
         )
@@ -71,6 +103,21 @@ export function MessageThread({
             <Bot className="h-4 w-4" />
             <span className="font-medium">{providerLabel}</span>
           </div>
+          {step.reasoningText ? (
+            <details className="mb-3 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm">
+              <summary className="cursor-pointer text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                Model reasoning
+              </summary>
+              <Streamdown
+                className="mt-3 text-xs leading-6 text-muted-foreground"
+                controls={false}
+                isAnimating={step.status === "started"}
+                plugins={streamdownPlugins}
+              >
+                {step.reasoningText}
+              </Streamdown>
+            </details>
+          ) : null}
           <Streamdown
             caret="block"
             className="text-sm leading-7 text-foreground"

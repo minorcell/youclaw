@@ -7,6 +7,7 @@ import type {
   ChatSession,
   ProviderAccount,
   ProvidersChangedPayload,
+  ReasoningTokenPayload,
   RunCancelledPayload,
   RunFailedPayload,
   RunFinishedPayload,
@@ -212,6 +213,38 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 step: payload.step,
                 status: "started",
                 outputText: payload.text,
+                reasoningText: "",
+              }
+          next.runsById = {
+            ...state.runsById,
+            [payload.run_id]: {
+              ...current,
+              timeline: upsertTimelineItem(current.timeline, nextStep),
+            },
+          }
+          return next as AppStoreState
+        }
+        case "chat.reasoning.token": {
+          const payload = envelope.payload as ReasoningTokenPayload
+          const current = state.runsById[payload.run_id]
+          if (!current) return state
+          const stepId = `step-${payload.step}`
+          const existingStep = current.timeline.find(
+            (item): item is Extract<TimelineItem, { kind: "step" }> =>
+              item.kind === "step" && item.id === stepId,
+          )
+          const nextStep: Extract<TimelineItem, { kind: "step" }> = existingStep
+            ? {
+                ...existingStep,
+                reasoningText: `${existingStep.reasoningText}${payload.text}`,
+              }
+            : {
+                id: stepId,
+                kind: "step",
+                step: payload.step,
+                status: "started",
+                outputText: "",
+                reasoningText: payload.text,
               }
           next.runsById = {
             ...state.runsById,
@@ -236,6 +269,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 step: payload.step,
                 status: "started",
                 outputText: "",
+                reasoningText: "",
               }),
             },
           }
@@ -255,6 +289,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 step: payload.step.step,
                 status: "finished",
                 outputText: payload.step.output_text,
+                reasoningText: payload.step.reasoning_text ?? "",
                 usage: payload.step.usage,
               }),
             },

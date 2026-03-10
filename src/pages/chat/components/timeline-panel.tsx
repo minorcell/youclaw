@@ -37,10 +37,16 @@ export function TimelinePanel({ run, onResolveApproval }: TimelinePanelProps) {
                   <pre className="whitespace-pre-wrap wrap-break-word text-xs leading-6 text-muted-foreground">
                     {item.outputText || "Waiting for model output..."}
                   </pre>
+                  {item.reasoningText ? (
+                    <pre className="whitespace-pre-wrap wrap-break-word rounded-2xl border border-border/60 bg-muted/40 p-3 text-[11px] leading-5 text-muted-foreground">
+                      {item.reasoningText}
+                    </pre>
+                  ) : null}
                   {item.usage ? (
                     <p className="text-xs text-muted-foreground">
                       tokens: {item.usage.input_tokens}/
-                      {item.usage.output_tokens}/{item.usage.total_tokens}
+                      {item.usage.output_tokens}/{item.usage.reasoning_tokens}/
+                      {item.usage.total_tokens}
                     </p>
                   ) : null}
                 </div>
