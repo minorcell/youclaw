@@ -31,6 +31,7 @@ pub fn run() {
             let ws_endpoint =
                 tauri::async_runtime::block_on(backend::ws::start_ws_server(backend.clone()))
                     .map_err(|err| std::io::Error::other(err.to_string()))?;
+            println!("local ws endpoint: {ws_endpoint}");
             app.manage(DesktopState {
                 backend,
                 ws_endpoint,

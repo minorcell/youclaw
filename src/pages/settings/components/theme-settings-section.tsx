@@ -1,21 +1,19 @@
-import { MoonStar, Palette, Sun } from "lucide-react"
+import { MoonStar, Palette, Sun, type LucideIcon } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   type ThemeMode,
   type ThemePresetId,
   themePresets,
-} from "@/store/theme-store"
+} from "@/store/settings-store"
 import { cn } from "@/lib/utils"
 
 interface ThemeSettingsSectionProps {
@@ -25,11 +23,33 @@ interface ThemeSettingsSectionProps {
   onPresetChange: (preset: ThemePresetId) => void
 }
 
-const modeLabel: Record<ThemeMode, string> = {
-  white: "White",
-  black: "Black",
-  custom: "Custom",
+interface ModeOption {
+  id: ThemeMode
+  label: string
+  description: string
+  icon: LucideIcon
 }
+
+const modeOptions: ModeOption[] = [
+  {
+    id: "white",
+    label: "浅色模式",
+    description: "明亮背景，适合白天与办公场景。",
+    icon: Sun,
+  },
+  {
+    id: "black",
+    label: "深色模式",
+    description: "降低亮度刺激，适合夜间使用。",
+    icon: MoonStar,
+  },
+  {
+    id: "custom",
+    label: "自定义配色",
+    description: "使用系统预设色板打造个性风格。",
+    icon: Palette,
+  },
+]
 
 export function ThemeSettingsSection({
   mode,
@@ -37,66 +57,68 @@ export function ThemeSettingsSection({
   onModeChange,
   onPresetChange,
 }: ThemeSettingsSectionProps) {
-  const selectedPreset =
-    themePresets.find((item) => item.id === preset) ?? themePresets[0]
-
   return (
-    <div className="space-y-4">
-      <Card className="border-border/70 bg-background/80 py-0 shadow-none">
-        <CardContent className="grid gap-4 py-4 md:grid-cols-[220px_minmax(0,1fr)]">
-          <div className="space-y-2">
-            <Label className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              Theme Mode
-            </Label>
-            <Select onValueChange={onModeChange} value={mode}>
-              <SelectTrigger className="h-10 w-full rounded-xl">
-                <SelectValue placeholder="Select mode" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="white">White</SelectItem>
-                <SelectItem value="black">Black</SelectItem>
-                <SelectItem value="custom">Custom</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="rounded-xl border border-border bg-card px-3 py-2">
-            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-              当前模式
-            </p>
-            <div className="mt-2 flex items-center gap-2">
-              <Badge className="gap-1 border-border bg-background text-foreground">
-                {mode === "white" ? (
-                  <Sun className="h-3 w-3" />
-                ) : mode === "black" ? (
-                  <MoonStar className="h-3 w-3" />
-                ) : (
-                  <Palette className="h-3 w-3" />
-                )}
-                {modeLabel[mode]}
-              </Badge>
-              {mode === "custom" ? (
-                <span className="text-xs text-muted-foreground">
-                  {selectedPreset.label}
-                </span>
-              ) : null}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+    <Card className="border border-border/70 bg-card/80 py-0 shadow-none">
+      <CardHeader className="py-4">
+        <CardTitle>界面模式</CardTitle>
+        <CardDescription>
+          选择系统主视觉模式。切换到自定义配色后，可在下方选择主题预设。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 py-4">
+        <RadioGroup
+          className="grid gap-3 sm:grid-cols-3"
+          onValueChange={(value) => onModeChange(value)}
+          value={mode}
+        >
+          {modeOptions.map((item) => {
+            const Icon = item.icon
+            const inputId = `theme-mode-${item.id}`
+            return (
+              <Label className="block cursor-pointer" htmlFor={inputId} key={item.id}>
+                <div
+                  className={cn(
+                    "h-full rounded-xl border p-3 transition-colors",
+                    mode === item.id
+                      ? "border-border bg-accent/45"
+                      : "border-border/70 bg-background/85 hover:bg-accent/20",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span
+                      className={cn(
+                        "inline-flex size-8 items-center justify-center rounded-lg border",
+                        mode === item.id
+                          ? "border-border bg-background"
+                          : "border-border/70 bg-background/70",
+                      )}
+                    >
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                    </span>
+                    <RadioGroupItem id={inputId} value={item.id} />
+                  </div>
+                  <p className="mt-3 text-sm font-medium">{item.label}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {item.description}
+                  </p>
+                </div>
+              </Label>
+            )
+          })}
+        </RadioGroup>
+      </CardContent>
 
       {mode === "custom" ? (
-        <Card className="border-border/70 bg-background/80 py-0 shadow-none">
-          <CardContent className="space-y-4 py-4">
+        <>
+          <div className="space-y-4 px-4 py-4">
             <div>
-              <p className="text-sm font-medium">预设主题配色</p>
+              <p className="text-base font-medium">预设主题配色</p>
               <p className="text-sm text-muted-foreground">
-                使用系统内置配色，避免手动调色负担。
+                选择系统内置配色方案，快速统一全站视觉风格。
               </p>
             </div>
-
             <RadioGroup
-              className="grid gap-3 md:grid-cols-3"
+              className="grid gap-3 xl:grid-cols-3"
               onValueChange={(value) => onPresetChange(value as ThemePresetId)}
               value={preset}
             >
@@ -106,43 +128,41 @@ export function ThemeSettingsSection({
                   htmlFor={`theme-preset-${item.id}`}
                   key={item.id}
                 >
-                  <Card
+                  <div
                     className={cn(
-                      "border py-0 shadow-none transition-colors",
+                      "h-full rounded-xl border p-3 transition-colors",
                       preset === item.id
-                        ? "border-primary/60 bg-accent/40"
-                        : "border-border bg-card/80 hover:bg-accent/25",
+                        ? "border-border bg-accent/45"
+                        : "border-border/70 bg-background/85 hover:bg-accent/20",
                     )}
                   >
-                    <CardContent className="space-y-3 py-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="font-medium">{item.label}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {item.description}
-                          </p>
-                        </div>
-                        <RadioGroupItem
-                          id={`theme-preset-${item.id}`}
-                          value={item.id}
-                        />
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">{item.label}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {item.description}
+                        </p>
                       </div>
+                      <RadioGroupItem
+                        id={`theme-preset-${item.id}`}
+                        value={item.id}
+                      />
+                    </div>
 
-                      <div className="flex items-center gap-2">
-                        <PresetSwatch color={item.palette.background} />
-                        <PresetSwatch color={item.palette.card} />
-                        <PresetSwatch color={item.palette.primary} />
-                        <PresetSwatch color={item.palette.accent} />
-                      </div>
-                    </CardContent>
-                  </Card>
+                    <div className="mt-3 flex items-center gap-2">
+                      <PresetSwatch color={item.palette.background} />
+                      <PresetSwatch color={item.palette.card} />
+                      <PresetSwatch color={item.palette.primary} />
+                      <PresetSwatch color={item.palette.accent} />
+                    </div>
+                  </div>
                 </Label>
               ))}
             </RadioGroup>
-          </CardContent>
-        </Card>
+          </div>
+        </>
       ) : null}
-    </div>
+    </Card>
   )
 }
 

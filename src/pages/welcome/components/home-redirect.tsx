@@ -1,16 +1,21 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Navigate, useLocation, useNavigate } from "react-router-dom"
 
 import { getAppClient } from "@/lib/app-client"
+import { flattenProviderProfiles } from "@/lib/provider-profiles"
 import { useAppStore } from "@/store/app-store"
 
 export function HomeRedirectPage() {
   const location = useLocation()
   const initialized = useAppStore((state) => state.initialized)
-  const providers = useAppStore((state) => state.providers)
+  const providerAccounts = useAppStore((state) => state.providerAccounts)
   const sessions = useAppStore((state) => state.sessions)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
   const lastOpenedSessionId = useAppStore((state) => state.lastOpenedSessionId)
+  const providers = useMemo(
+    () => flattenProviderProfiles(providerAccounts),
+    [providerAccounts],
+  )
 
   if (!initialized) {
     return <LoadingScreen />
@@ -104,15 +109,31 @@ function CreateSessionAndRedirect({
 }
 
 export function LoadingScreen() {
+  const wsStatus = useAppStore((state) => state.wsStatus)
+  const lastError = useAppStore((state) => state.lastError)
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="rounded-3xl border border-border bg-card px-8 py-6 text-center shadow-none">
+      <div className="max-w-180 rounded-3xl border border-border bg-card px-8 py-6 text-center shadow-none">
         <p className="text-xs font-serif uppercase tracking-[0.24em] text-muted-foreground">
           BgtClaw
         </p>
-        <h1 className="mt-3 text-2xl font-semibold text-foreground">
+        <h1 className="mt-3 text-2xl font-serif font-semibold text-foreground">
           Connecting to local agent runtime…
         </h1>
+        <p className="mt-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+          ws: {wsStatus}
+        </p>
+        {lastError ? (
+          <div className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-left">
+            <p className="text-xs uppercase tracking-[0.18em] text-destructive/80">
+              bootstrap failed
+            </p>
+            <p className="mt-1 wrap-break-word text-sm text-destructive">
+              {lastError}
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
   )

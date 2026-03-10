@@ -34,7 +34,7 @@ export function TimelinePanel({ run, onResolveApproval }: TimelinePanelProps) {
                       {item.status}
                     </span>
                   </div>
-                  <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-muted-foreground">
+                  <pre className="whitespace-pre-wrap wrap-break-word text-xs leading-6 text-muted-foreground">
                     {item.outputText || "Waiting for model output..."}
                   </pre>
                   {item.usage ? (

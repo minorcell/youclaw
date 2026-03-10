@@ -13,9 +13,10 @@ use crate::backend::agent;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     BindSessionProviderRequest, BootstrapRequest, ChatCancelRequest, ChatSendRequest,
-    CollectionResponse, ConnectionReadyPayload, CreateProviderRequest, CreateSessionRequest,
-    DeleteSessionRequest, HeartbeatPayload, ToolApprovalResolveRequest, UpdateProviderRequest,
-    WsEnvelope, WsKind,
+    ConnectionReadyPayload, CreateProviderModelRequest, CreateProviderRequest,
+    CreateSessionRequest, DeleteProviderModelRequest, DeleteSessionRequest, HeartbeatPayload,
+    TestProviderModelRequest, ToolApprovalResolveRequest, UpdateProviderModelRequest,
+    UpdateProviderRequest, WsEnvelope, WsKind,
 };
 use crate::backend::{now_timestamp, BackendState};
 
@@ -80,18 +81,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<BackendState>) {
         let Message::Text(text) = message else {
             continue;
         };
-        let response = match serde_json::from_str::<WsEnvelope>(&text) {
-            Ok(envelope) => dispatch_request(state.clone(), envelope).await,
-            Err(err) => Err(AppError::Validation(format!("invalid ws payload: {err}"))),
+        let (response, req_id, req_name) = match serde_json::from_str::<WsEnvelope>(&text) {
+            Ok(envelope) => {
+                let id = envelope.id.clone();
+                let name = envelope.name.clone();
+                let result = dispatch_request(state.clone(), envelope).await;
+                (result, id, name)
+            }
+            Err(err) => (
+                Err(AppError::Validation(format!("invalid ws payload: {err}"))),
+                "unknown".to_string(),
+                "unknown".to_string(),
+            ),
         };
         let serialized = match response {
             Ok(envelope) => serde_json::to_string(&envelope).unwrap_or_default(),
-            Err(err) => serde_json::to_string(&WsEnvelope::response_error(
-                "invalid-request",
-                "unknown",
-                &err,
-            ))
-            .unwrap_or_default(),
+            Err(err) => {
+                serde_json::to_string(&WsEnvelope::response_error(&req_id, &req_name, &err))
+                    .unwrap_or_default()
+            }
         };
         if out_tx.send(serialized).is_err() {
             break;
@@ -125,13 +133,10 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
                 WsEnvelope::response_ok(envelope.id, envelope.name, state.bootstrap()?)?
             }
         }
-        "providers.list" => WsEnvelope::response_ok(
-            envelope.id,
-            envelope.name,
-            CollectionResponse {
-                items: state.storage.list_provider_profiles()?,
-            },
-        )?,
+        "providers.list" => {
+            let payload = state.list_provider_snapshot()?;
+            WsEnvelope::response_ok(envelope.id, envelope.name, payload)?
+        }
         "providers.create" => {
             let req = serde_json::from_value::<CreateProviderRequest>(envelope.payload)?;
             let created = state.create_provider(req).await?;
@@ -141,6 +146,34 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
             let req = serde_json::from_value::<UpdateProviderRequest>(envelope.payload)?;
             let updated = state.update_provider(req).await?;
             WsEnvelope::response_ok(envelope.id, envelope.name, updated)?
+        }
+        "providers.models.create" => {
+            let req = serde_json::from_value::<CreateProviderModelRequest>(envelope.payload)?;
+            let created = state.create_provider_model(req).await?;
+            WsEnvelope::response_ok(envelope.id, envelope.name, created)?
+        }
+        "providers.models.update" => {
+            let req = serde_json::from_value::<UpdateProviderModelRequest>(envelope.payload)?;
+            let updated = state.update_provider_model(req).await?;
+            WsEnvelope::response_ok(envelope.id, envelope.name, updated)?
+        }
+        "providers.models.delete" => {
+            let req = serde_json::from_value::<DeleteProviderModelRequest>(envelope.payload)?;
+            state.delete_provider_model(&req.id)?;
+            WsEnvelope::response_ok(
+                envelope.id,
+                envelope.name,
+                serde_json::json!({ "deleted": true }),
+            )?
+        }
+        "providers.models.test" => {
+            let req = serde_json::from_value::<TestProviderModelRequest>(envelope.payload)?;
+            state.test_provider_model(req).await?;
+            WsEnvelope::response_ok(
+                envelope.id,
+                envelope.name,
+                serde_json::json!({ "ok": true }),
+            )?
         }
         "sessions.list" => WsEnvelope::response_ok(
             envelope.id,

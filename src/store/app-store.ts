@@ -5,7 +5,8 @@ import type {
   ChatMessage,
   ChatRun,
   ChatSession,
-  ProviderProfile,
+  ProviderAccount,
+  ProvidersChangedPayload,
   RunCancelledPayload,
   RunFailedPayload,
   RunFinishedPayload,
@@ -28,7 +29,7 @@ interface AppStoreState {
   initialized: boolean
   wsStatus: WsStatus
   endpoint: string | null
-  providers: ProviderProfile[]
+  providerAccounts: ProviderAccount[]
   sessions: ChatSession[]
   messagesBySession: Record<string, ChatMessage[]>
   approvalsById: Record<string, ToolApproval>
@@ -91,7 +92,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
   initialized: false,
   wsStatus: "idle",
   endpoint: null,
-  providers: [],
+  providerAccounts: [],
   sessions: [],
   messagesBySession: {},
   approvalsById: {},
@@ -115,11 +116,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
       switch (envelope.name) {
         case "bootstrap.get": {
           const payload = envelope.payload as BootstrapPayload
-          if (!payload || !("provider_profiles" in payload)) {
+          if (!payload || !("provider_accounts" in payload)) {
             return state
           }
           next.initialized = true
-          next.providers = payload.provider_profiles
+          next.providerAccounts = payload.provider_accounts ?? []
           next.sessions = payload.sessions
           next.messagesBySession = groupMessages(payload.messages)
           next.approvalsById = Object.fromEntries(
@@ -143,11 +144,13 @@ export const useAppStore = create<AppStoreState>((set) => ({
           return next as AppStoreState
         }
         case "providers.changed": {
-          next.providers = (envelope.payload as { provider_profiles: ProviderProfile[] }).provider_profiles
+          const payload = envelope.payload as ProvidersChangedPayload
+          next.providerAccounts = payload.provider_accounts ?? []
           return next as AppStoreState
         }
         case "providers.list": {
-          next.providers = (envelope.payload as { items: ProviderProfile[] }).items
+          const payload = envelope.payload as ProvidersChangedPayload
+          next.providerAccounts = payload.provider_accounts ?? []
           return next as AppStoreState
         }
         case "sessions.changed":

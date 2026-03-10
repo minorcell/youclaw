@@ -8,8 +8,10 @@ use serde_json::Value;
 
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
-    message_from_record, now_timestamp, record_from_message, BootstrapPayload, ChatMessage,
-    ChatRun, ChatSession, ProviderProfile, SessionsChangedPayload, StoredProviders, ToolApproval,
+    flatten_provider_profiles, message_from_record, migrate_provider_accounts_from_legacy,
+    normalize_provider_accounts, now_timestamp, record_from_message, BootstrapPayload, ChatMessage,
+    ChatRun, ChatSession, ProviderAccount, ProviderProfile, SessionsChangedPayload,
+    StoredProviders, ToolApproval,
 };
 
 #[derive(Clone)]
@@ -113,8 +115,10 @@ impl StorageService {
     }
 
     pub fn load_bootstrap(&self) -> AppResult<BootstrapPayload> {
+        let provider_accounts = self.list_provider_accounts()?;
         Ok(BootstrapPayload {
-            provider_profiles: self.list_provider_profiles()?,
+            provider_profiles: flatten_provider_profiles(&provider_accounts),
+            provider_accounts,
             sessions: self.list_sessions()?,
             messages: self.list_messages()?,
             approvals: self.list_approvals()?,
@@ -124,28 +128,55 @@ impl StorageService {
     }
 
     pub fn list_provider_profiles(&self) -> AppResult<Vec<ProviderProfile>> {
+        Ok(flatten_provider_profiles(&self.list_provider_accounts()?))
+    }
+
+    pub fn list_provider_accounts(&self) -> AppResult<Vec<ProviderAccount>> {
         let _guard = self
             .inner
             .providers_lock
             .lock()
             .map_err(|_| AppError::Storage("provider lock poisoned".to_string()))?;
+        self.load_provider_accounts_unlocked()
+    }
+
+    pub fn save_provider_accounts(&self, accounts: &[ProviderAccount]) -> AppResult<()> {
+        let _guard = self
+            .inner
+            .providers_lock
+            .lock()
+            .map_err(|_| AppError::Storage("provider lock poisoned".to_string()))?;
+        self.write_provider_accounts_unlocked(accounts)
+    }
+
+    fn load_provider_accounts_unlocked(&self) -> AppResult<Vec<ProviderAccount>> {
         let raw = fs::read_to_string(&self.inner.providers_path)?;
         let parsed = if raw.trim().is_empty() {
             StoredProviders::default()
         } else {
             serde_json::from_str::<StoredProviders>(&raw)?
         };
-        Ok(parsed.profiles)
+
+        let mut should_persist = false;
+        let mut accounts = if parsed.accounts.is_empty() && !parsed.profiles.is_empty() {
+            should_persist = true;
+            migrate_provider_accounts_from_legacy(parsed.profiles)
+        } else {
+            parsed.accounts
+        };
+        if normalize_provider_accounts(&mut accounts) {
+            should_persist = true;
+        }
+        if should_persist {
+            self.write_provider_accounts_unlocked(&accounts)?;
+        }
+        Ok(accounts)
     }
 
-    pub fn save_provider_profiles(&self, profiles: &[ProviderProfile]) -> AppResult<()> {
-        let _guard = self
-            .inner
-            .providers_lock
-            .lock()
-            .map_err(|_| AppError::Storage("provider lock poisoned".to_string()))?;
+    fn write_provider_accounts_unlocked(&self, accounts: &[ProviderAccount]) -> AppResult<()> {
         let body = serde_json::to_vec_pretty(&StoredProviders {
-            profiles: profiles.to_vec(),
+            accounts: accounts.to_vec(),
+            profiles: Vec::new(),
         })?;
         fs::write(&self.inner.providers_path, body)?;
         Ok(())
@@ -218,6 +249,15 @@ impl StorageService {
         conn.execute(
             "UPDATE chat_sessions SET provider_profile_id = ?2, updated_at = ?3 WHERE id = ?1",
             params![session_id, provider_profile_id, now_timestamp()],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_session_provider_binding(&self, provider_profile_id: &str) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "UPDATE chat_sessions SET provider_profile_id = NULL, updated_at = ?2 WHERE provider_profile_id = ?1",
+            params![provider_profile_id, now_timestamp()],
         )?;
         Ok(())
     }
@@ -572,13 +612,14 @@ impl StorageService {
 
     pub fn get_last_opened_session_id(&self) -> AppResult<Option<String>> {
         let conn = self.open_connection()?;
-        conn.query_row(
-            "SELECT value FROM settings WHERE key = 'last_opened_session_id'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(Into::into)
+        let value = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'last_opened_session_id'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        Ok(value.flatten())
     }
 
     pub fn sessions_payload(&self) -> AppResult<SessionsChangedPayload> {
@@ -594,20 +635,28 @@ mod tests {
     use tempfile::tempdir;
 
     use super::StorageService;
-    use crate::backend::models::{new_chat_session, new_provider_profile, CreateProviderRequest};
+    use crate::backend::models::{
+        new_chat_session, new_provider_account, new_provider_model, CreateProviderModelRequest,
+        CreateProviderRequest,
+    };
 
     #[test]
     fn persists_provider_profiles() {
         let dir = tempdir().expect("tempdir");
         let storage = StorageService::new(dir.path().join("state")).expect("storage");
-        let profile = new_provider_profile(CreateProviderRequest {
+        let mut account = new_provider_account(CreateProviderRequest {
             profile_name: "Local".to_string(),
             base_url: "https://example.com".to_string(),
             api_key: "sk-test".to_string(),
+        });
+        let model = new_provider_model(CreateProviderModelRequest {
+            provider_id: account.id.clone(),
+            model_name: "gpt-test".to_string(),
             model: "gpt-test".to_string(),
         });
+        account.models.push(model);
         storage
-            .save_provider_profiles(std::slice::from_ref(&profile))
+            .save_provider_accounts(std::slice::from_ref(&account))
             .expect("save provider");
 
         let sessions = storage.list_provider_profiles().expect("list providers");
@@ -628,5 +677,20 @@ mod tests {
         let loaded = storage.list_sessions().expect("list sessions");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, session.id);
+    }
+
+    #[test]
+    fn handles_null_last_opened_session_id() {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+
+        storage
+            .set_last_opened_session_id(None)
+            .expect("set null last open");
+
+        let loaded = storage
+            .get_last_opened_session_id()
+            .expect("load last opened session id");
+        assert!(loaded.is_none());
     }
 }

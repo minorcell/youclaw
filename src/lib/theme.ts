@@ -1,4 +1,4 @@
-import type { CustomThemePalette, ThemeMode } from "@/store/theme-store"
+import type { CustomThemePalette, ThemeMode } from "@/store/settings-store"
 
 const CUSTOM_THEME_VARS = [
   "--background",

@@ -16,10 +16,31 @@ export interface WsEnvelope<T = unknown> {
 
 export interface ProviderProfile {
   id: string
+  provider_id: string
+  model_name: string
   name: string
   base_url: string
   api_key: string
   model: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProviderModel {
+  id: string
+  provider_id: string
+  name: string
+  model: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ProviderAccount {
+  id: string
+  name: string
+  base_url: string
+  api_key: string
+  models: ProviderModel[]
   created_at: string
   updated_at: string
 }
@@ -105,6 +126,7 @@ export interface AgentStep {
 
 export interface BootstrapPayload {
   provider_profiles: ProviderProfile[]
+  provider_accounts: ProviderAccount[]
   sessions: ChatSession[]
   messages: ChatMessage[]
   approvals: ToolApproval[]
@@ -114,6 +136,7 @@ export interface BootstrapPayload {
 
 export interface ProvidersChangedPayload {
   provider_profiles: ProviderProfile[]
+  provider_accounts: ProviderAccount[]
 }
 
 export interface SessionsChangedPayload {

@@ -29,42 +29,47 @@ export function ChatComposer({
   onSend,
   onBindProvider,
 }: ChatComposerProps) {
+  const selectedProvider = providers.find((p) => p.id === selectedProviderId)
+  const selectedModel = selectedProvider
+    ? `${selectedProvider.name} / ${selectedProvider.model_name || selectedProvider.model}`
+    : selectedProviderId ?? ""
+
   return (
-    <Card className="rounded-3xl border-border/80 bg-background/95 py-0 shadow-[0_12px_40px_-26px_rgba(0,0,0,0.35)] backdrop-blur">
-      <div className="px-5 pt-4">
+    <Card className="rounded-2xl border border-border/70 bg-background/95 py-0 shadow-[0_12px_40px_-26px_rgba(0,0,0,0.35)] backdrop-blur">
+      <div className="px-3 pt-3">
         <Textarea
-          className="min-h-[74px] resize-none border-0 bg-transparent p-0 text-[16px] leading-7 shadow-none focus-visible:ring-0"
+          className="rounded-xs min-h-16 max-h-60 resize-none border-0 bg-transparent p-0 text-[16px] leading-[1.4] shadow-none focus-visible:ring-0 overflow-y-auto dark:bg-transparent"
           onChange={(event) => onInputChange(event.target.value)}
           onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault()
               onSend()
             }
           }}
-          placeholder="输入消息...（输入 / 召唤牛马）"
+          placeholder="输入消息..."
           value={input}
         />
       </div>
 
-      <div className="flex items-center justify-end gap-3 px-4 py-3">
+      <div className="flex items-center justify-end gap-3 px-3 pb-2">
         <div className="flex items-center gap-2">
           <Select
             onValueChange={(value) => onBindProvider(value)}
             value={selectedProviderId ?? providers[0]?.id ?? ""}
           >
-            <SelectTrigger className="h-9 min-w-[170px] rounded-full border-border bg-muted/70 px-3 text-[13px]">
-              <SelectValue placeholder="选择模型" />
+            <SelectTrigger className="h-9 min-w-42.5 rounded-full border-border bg-muted/70 px-3 text-[13px]">
+              <SelectValue placeholder="选择模型">{selectedModel}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {providers.map((provider) => (
                 <SelectItem key={provider.id} value={provider.id}>
-                  {provider.model}
+                  {provider.name} / {provider.model_name || provider.model}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Button
-            className="h-10 w-10 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
+            className="h-9 w-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={onSend}
             size="icon"
             type="button"

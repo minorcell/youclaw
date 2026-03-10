@@ -2,7 +2,9 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
 export type ThemeMode = "white" | "black" | "custom"
-export type ThemePresetId = "ocean-blue" | "grass-green" | "desert-yellow"
+export type ThemePresetId = "grass-green" | "desert-yellow"
+export type SettingsSection = "general" | "providers"
+export type SelectedProviderId = string | "new"
 
 export interface CustomThemePalette {
   background: string
@@ -23,21 +25,6 @@ export interface ThemePreset {
 }
 
 export const themePresets: ThemePreset[] = [
-  {
-    id: "ocean-blue",
-    label: "海洋蓝",
-    description: "冷静清爽，适合长时间对话与阅读。",
-    palette: {
-      background: "#edf4fb",
-      foreground: "#162031",
-      card: "#f7fbff",
-      primary: "#1f5fa6",
-      border: "#c6d8ec",
-      muted: "#dfeaf6",
-      accent: "#cfe2f8",
-      sidebar: "#d7e6f7",
-    },
-  },
   {
     id: "grass-green",
     label: "草坪绿",
@@ -70,7 +57,7 @@ export const themePresets: ThemePreset[] = [
   },
 ]
 
-export const defaultThemePresetId: ThemePresetId = "ocean-blue"
+export const defaultThemePresetId: ThemePresetId = "grass-green"
 
 const themePresetPaletteMap: Record<ThemePresetId, CustomThemePalette> =
   themePresets.reduce(
@@ -85,21 +72,46 @@ function getPresetPalette(presetId: ThemePresetId): CustomThemePalette {
   return themePresetPaletteMap[presetId]
 }
 
-interface ThemeStoreState {
+function isThemePresetId(value: unknown): value is ThemePresetId {
+  return value === "grass-green" || value === "desert-yellow"
+}
+
+function normalizePresetId(value: unknown): ThemePresetId {
+  if (isThemePresetId(value)) {
+    return value
+  }
+  return defaultThemePresetId
+}
+
+interface PersistedSettingsThemeState {
   mode: ThemeMode
   preset: ThemePresetId
   custom: CustomThemePalette
+}
+
+interface SettingsStoreState extends PersistedSettingsThemeState {
+  settingsSection: SettingsSection
+  selectedProviderId: SelectedProviderId
   setMode: (mode: ThemeMode) => void
   setPreset: (preset: ThemePresetId) => void
   resetCustomTheme: () => void
+  setSettingsSection: (section: SettingsSection) => void
+  setSelectedProviderId: (providerId: SelectedProviderId) => void
+  resetSettingsUiState: () => void
 }
 
-export const useThemeStore = create<ThemeStoreState>()(
+const defaultSettingsUiState = {
+  settingsSection: "general" as SettingsSection,
+  selectedProviderId: "new" as SelectedProviderId,
+}
+
+export const useSettingsStore = create<SettingsStoreState>()(
   persist(
     (set) => ({
       mode: "white",
       preset: defaultThemePresetId,
       custom: getPresetPalette(defaultThemePresetId),
+      ...defaultSettingsUiState,
       setMode: (mode) => set({ mode }),
       setPreset: (preset) =>
         set({
@@ -111,26 +123,28 @@ export const useThemeStore = create<ThemeStoreState>()(
           preset: defaultThemePresetId,
           custom: getPresetPalette(defaultThemePresetId),
         }),
+      setSettingsSection: (settingsSection) => set({ settingsSection }),
+      setSelectedProviderId: (selectedProviderId) => set({ selectedProviderId }),
+      resetSettingsUiState: () => set(defaultSettingsUiState),
     }),
     {
-      name: "baogongtou.theme",
-      version: 2,
-      migrate: (persistedState, version) => {
-        const state = (persistedState ?? {}) as Partial<ThemeStoreState>
-        if (version < 2) {
-          const nextPreset = defaultThemePresetId
-          return {
-            mode: state.mode ?? "white",
-            preset: nextPreset,
-            custom: getPresetPalette(nextPreset),
-          }
-        }
-
-        const nextPreset = state.preset ?? defaultThemePresetId
+      name: "bgtclaw.theme",
+      version: 4,
+      partialize: (state) => ({
+        mode: state.mode,
+        preset: state.preset,
+        custom: state.custom,
+      }),
+      migrate: (persistedState, _version) => {
+        const state = (persistedState ?? {}) as Partial<
+          PersistedSettingsThemeState & { preset?: string }
+        >
+        const nextPreset = normalizePresetId(state.preset)
         return {
           mode: state.mode ?? "white",
           preset: nextPreset,
           custom: getPresetPalette(nextPreset),
+          ...defaultSettingsUiState,
         }
       },
     },

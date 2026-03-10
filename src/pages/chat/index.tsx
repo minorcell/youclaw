@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Navigate, useParams } from "react-router-dom"
 
 import { ChatComposer } from "@/pages/chat/components/chat-composer"
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { getAppClient } from "@/lib/app-client"
 import { partsToText } from "@/lib/parts"
+import { flattenProviderProfiles } from "@/lib/provider-profiles"
 import type { ProviderProfile, RunViewState, TimelineItem } from "@/lib/types"
 import { useAppStore } from "@/store/app-store"
 
@@ -14,16 +15,24 @@ export function ChatPage() {
   const params = useParams<{ sessionId: string }>()
   const sessionId = params.sessionId ?? null
 
-  const providers = useAppStore((state) => state.providers)
+  const providerAccounts = useAppStore((state) => state.providerAccounts)
   const sessions = useAppStore((state) => state.sessions)
   const messagesBySession = useAppStore((state) => state.messagesBySession)
   const runsById = useAppStore((state) => state.runsById)
   const approvalsById = useAppStore((state) => state.approvalsById)
-  const wsStatus = useAppStore((state) => state.wsStatus)
   const setActiveSession = useAppStore((state) => state.setActiveSession)
   const clearError = useAppStore((state) => state.clearError)
+  const providers = useMemo(
+    () => flattenProviderProfiles(providerAccounts),
+    [providerAccounts],
+  )
 
   const [input, setInput] = useState("")
+  const [userScrolledUp, setUserScrolledUp] = useState(false)
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const lastMessageCountRef = useRef(0)
+  const lastRunStepsTextRef = useRef("")
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === sessionId) ?? null,
@@ -105,6 +114,54 @@ export function ChatPage() {
     }
   }, [sessionId, setActiveSession])
 
+  // 检测用户是否手动上滑
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const handleScroll = () => {
+      const currScrollTop = container.scrollTop
+      const currScrollHeight = container.scrollHeight
+      const currClientHeight = container.clientHeight
+      const currIsNearBottom =
+        currScrollHeight - currScrollTop - currClientHeight < 100
+      if (!currIsNearBottom) {
+        setUserScrolledUp(true)
+      } else {
+        setUserScrolledUp(false)
+      }
+    }
+
+    container.addEventListener("scroll", handleScroll)
+    return () => container.removeEventListener("scroll", handleScroll)
+  }, [])
+
+  // 当消息变化时，如果用户没有上滑，自动滚动到底部
+  const currentMessageCount = messages.length
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    if (!userScrolledUp && currentMessageCount > lastMessageCountRef.current) {
+      container.scrollTo({ top: container.scrollHeight })
+    }
+    lastMessageCountRef.current = currentMessageCount
+  }, [currentMessageCount, userScrolledUp, messages.length])
+
+  // 当 runSteps 变化时（流式输出），如果用户没有上滑，自动滚动到底部
+  const currentRunStepsText = runSteps.map((s) => s.outputText).join("")
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    if (!userScrolledUp && currentRunStepsText !== lastRunStepsTextRef.current) {
+      requestAnimationFrame(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: "smooth" })
+      })
+    }
+    lastRunStepsTextRef.current = currentRunStepsText
+  }, [currentRunStepsText, userScrolledUp, runSteps])
+
   if (providers.length === 0) {
     return <Navigate replace to="/welcome/provider" />
   }
@@ -144,23 +201,17 @@ export function ChatPage() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background/70">
       <div className="relative flex-1 min-h-0">
-        <div className="h-full overflow-y-auto px-6 pb-72 pt-8 md:px-[9%]">
-          <div className="mb-7 flex items-center justify-center gap-2">
-            <Badge className="rounded-full border-border bg-muted/60 px-3 py-1 text-xs text-muted-foreground">
-              今日
-            </Badge>
-            <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground/80">
-              {wsStatus}
-            </span>
-          </div>
-
+        <div
+          ref={scrollContainerRef}
+          className="h-full select-text overflow-y-auto px-6 pb-72 pt-8 md:px-[9%]"
+        >
           <MessageThread
             error={activeRun?.error}
             messages={renderMessages}
             providerLabel={
               activeProvider
-                ? `${activeProvider.name} / ${activeProvider.model}`
-                : "Baogongtou Agent"
+                ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
+                : "BgtClaw Agent"
             }
             runSteps={runSteps}
           />
@@ -207,8 +258,8 @@ export function ChatPage() {
           ) : null}
         </div>
 
-        <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center px-4">
-          <div className="pointer-events-auto w-full max-w-[840px]">
+        <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-4">
+          <div className="pointer-events-auto w-full max-w-210 select-text">
             <ChatComposer
               input={input}
               onBindProvider={(id) => void handleBindProvider(id)}
