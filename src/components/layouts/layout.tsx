@@ -263,7 +263,7 @@ export function AppLayout() {
           className={cn(
             'group absolute top-1/2 z-20 flex h-10 w-4 -translate-x-1/2 -translate-y-1/2 cursor-col-resize items-center justify-center rounded-full bg-background/85 text-muted-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
             isResizingSidebar
-              ? 'border-foreground/25 bg-accent/50 text-foreground'
+              ? 'bg-accent/50 text-foreground'
               : 'hover:bg-card hover:text-foreground',
           )}
           onKeyDown={handleSidebarResizeKeyDown}
