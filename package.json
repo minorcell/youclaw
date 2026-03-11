@@ -1,10 +1,11 @@
 {
-  "name": "bgt-claw",
+  "name": "youclaw",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "clear-cache": "bash ./scripts/clear-youclaw-cache.sh",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

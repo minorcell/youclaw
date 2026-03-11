@@ -347,31 +347,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "bgtclaw"
-version = "0.1.0"
-dependencies = [
- "aquaregia",
- "axum",
- "chrono",
- "dirs",
- "futures-util",
- "rusqlite",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "similar",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tempfile",
- "thiserror 2.0.18",
- "tiktoken-rs",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "bit-set"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6079,6 +6054,31 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "synstructure",
+]
+
+[[package]]
+name = "youclaw"
+version = "0.1.0"
+dependencies = [
+ "aquaregia",
+ "axum",
+ "chrono",
+ "dirs",
+ "futures-util",
+ "rusqlite",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "similar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tiktoken-rs",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
