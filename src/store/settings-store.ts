@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware"
 
 export type ThemeMode = "white" | "black" | "custom"
 export type ThemePresetId = "grass-green" | "desert-yellow"
-export type SettingsSection = "general" | "providers"
+export type SettingsSection = "general" | "memory" | "providers" | "usage"
 export type SelectedProviderId = string | "new"
 
 export interface CustomThemePalette {

@@ -59,11 +59,25 @@ function groupMessages(messages: ChatMessage[]): Record<string, ChatMessage[]> {
   }, {})
 }
 
-function appendUniqueMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
-  if (messages.some((item) => item.id === message.id)) {
+function mergeUniqueMessages(
+  messages: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  if (incoming.length === 0) {
     return messages
   }
-  return [...messages, message]
+  const seen = new Set(messages.map((item) => item.id))
+  const next = [...messages]
+  let changed = false
+  for (const message of incoming) {
+    if (seen.has(message.id)) {
+      continue
+    }
+    seen.add(message.id)
+    next.push(message)
+    changed = true
+  }
+  return changed ? next : messages
 }
 
 function upsertTimelineItem(items: TimelineItem[], nextItem: TimelineItem): TimelineItem[] {
@@ -172,9 +186,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
         }
         case "chat.run.started": {
           const payload = envelope.payload as RunStartedPayload
-          const messages = appendUniqueMessage(
+          const messages = mergeUniqueMessages(
             state.messagesBySession[payload.session_id] ?? [],
-            payload.user_message,
+            [payload.user_message],
           )
           const current = getOrCreateRunView(state, payload.run)
           next.messagesBySession = {
@@ -345,9 +359,13 @@ export const useAppStore = create<AppStoreState>((set) => ({
         case "chat.run.finished": {
           const payload = envelope.payload as RunFinishedPayload
           const current = getOrCreateRunView(state, payload.run)
+          const messages = mergeUniqueMessages(
+            state.messagesBySession[payload.session_id] ?? [],
+            payload.new_messages,
+          )
           next.messagesBySession = {
             ...state.messagesBySession,
-            [payload.session_id]: payload.messages,
+            [payload.session_id]: messages,
           }
           next.runsById = {
             ...state.runsById,

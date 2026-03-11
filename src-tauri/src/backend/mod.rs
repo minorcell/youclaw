@@ -1,11 +1,13 @@
 pub mod agent;
+pub mod agent_workspace;
+pub mod agents;
 pub mod errors;
-pub mod filesystem;
 pub mod models;
 pub mod storage;
 pub mod ws;
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -14,9 +16,13 @@ use serde::Serialize;
 use tokio::sync::{broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use agent_workspace::AgentWorkspace;
 pub use errors::{AppError, AppResult};
 pub use models::*;
+use storage::MemoryChunkInput;
 pub use storage::StorageService;
+
+const MEMORY_CHUNK_WINDOW: usize = 24;
 
 #[derive(Clone)]
 pub struct WsHub {
@@ -103,6 +109,7 @@ impl ApprovalService {
 #[derive(Clone)]
 pub struct BackendState {
     pub storage: StorageService,
+    pub workspace: AgentWorkspace,
     pub ws_hub: WsHub,
     pub approvals: ApprovalService,
     active_runs: Arc<Mutex<HashMap<String, CancellationToken>>>,
@@ -111,18 +118,28 @@ pub struct BackendState {
 impl BackendState {
     pub fn new(base_dir: PathBuf) -> AppResult<Self> {
         let storage = StorageService::new(base_dir)?;
+        let workspace = AgentWorkspace::new(storage.base_dir());
+        workspace.ensure_layout()?;
+        let config = storage.get_agent_config()?;
+        workspace.install_templates(&config.language, true)?;
         let ws_hub = WsHub::new();
         let approvals = ApprovalService::new(storage.clone());
-        Ok(Self {
+        let state = Self {
             storage,
+            workspace,
             ws_hub,
             approvals,
             active_runs: Arc::new(Mutex::new(HashMap::new())),
-        })
+        };
+        let _ = state.reindex_memory();
+        Ok(state)
     }
 
     pub fn bootstrap(&self) -> AppResult<BootstrapPayload> {
-        self.storage.load_bootstrap()
+        let mut payload = self.storage.load_bootstrap()?;
+        payload.agent_config = self.storage.get_agent_config()?;
+        payload.workspace_files = self.workspace.list_files()?;
+        Ok(payload)
     }
 
     pub fn get_provider_profile(&self, provider_id: &str) -> AppResult<Option<ProviderProfile>> {
@@ -293,6 +310,91 @@ impl BackendState {
         Ok(())
     }
 
+    pub fn get_agent_config(&self) -> AppResult<AgentConfigPayload> {
+        self.storage.get_agent_config()
+    }
+
+    pub fn update_agent_config(
+        &self,
+        req: AgentConfigUpdateRequest,
+    ) -> AppResult<AgentConfigPayload> {
+        let updated = self.storage.update_agent_config(req)?;
+        self.workspace.install_templates(&updated.language, true)?;
+        Ok(updated)
+    }
+
+    pub fn list_workspace_files(&self) -> AppResult<WorkspaceFilesPayload> {
+        Ok(WorkspaceFilesPayload {
+            files: self.workspace.list_files()?,
+        })
+    }
+
+    pub fn read_workspace_file(
+        &self,
+        req: WorkspaceFileReadRequest,
+    ) -> AppResult<WorkspaceFileReadPayload> {
+        Ok(WorkspaceFileReadPayload {
+            path: req.path.clone(),
+            content: self.workspace.read_workspace_file(&req.path)?,
+        })
+    }
+
+    pub fn write_workspace_file(
+        &self,
+        req: WorkspaceFileWriteRequest,
+    ) -> AppResult<WorkspaceFileWritePayload> {
+        self.workspace
+            .write_workspace_file(&req.path, &req.content)?;
+        if is_memory_related_path(&req.path) {
+            let _ = self.reindex_memory();
+        }
+        Ok(WorkspaceFileWritePayload {
+            path: req.path,
+            written: true,
+        })
+    }
+
+    pub fn memory_search(&self, req: MemorySearchRequest) -> AppResult<MemorySearchPayload> {
+        self.storage.memory_search(
+            req.query.trim(),
+            req.max_results.unwrap_or(8),
+            req.min_score.unwrap_or(0.05),
+        )
+    }
+
+    pub fn memory_get(&self, req: MemoryGetRequest) -> AppResult<MemoryGetPayload> {
+        let full = self.workspace.read_memory_file(&req.path)?;
+        let lines = full.lines().collect::<Vec<_>>();
+        let total_lines = lines.len() as u32;
+        let offset = req.offset.unwrap_or(0) as usize;
+        let limit = req.limit.unwrap_or(120).clamp(1, 1000) as usize;
+        let start = offset.min(lines.len());
+        let end = start.saturating_add(limit).min(lines.len());
+        let content = lines[start..end].join("\n");
+
+        Ok(MemoryGetPayload {
+            path: req.path,
+            line_start: start as u32 + 1,
+            line_end: end as u32,
+            total_lines,
+            content,
+        })
+    }
+
+    pub fn reindex_memory(&self) -> AppResult<MemoryReindexPayload> {
+        let files = self.workspace.collect_memory_source_files()?;
+        let mut chunks = Vec::<MemoryChunkInput>::new();
+
+        for path in &files {
+            let content = fs::read_to_string(path)?;
+            let relative_path = self.workspace.relative_path(path)?;
+            chunks.extend(chunk_markdown_memory_file(&relative_path, &content));
+        }
+
+        self.storage
+            .rebuild_memory_chunks(&chunks, files.len() as u32)
+    }
+
     pub fn publish_providers_changed(&self) -> AppResult<()> {
         self.ws_hub
             .emit("providers.changed", self.list_provider_snapshot()?)
@@ -355,10 +457,26 @@ fn validate_provider_model_request(model_name: &str, model: &str) -> AppResult<(
     Ok(())
 }
 
+pub(crate) fn normalize_openai_compatible_endpoint(base_url: &str) -> (String, Option<String>) {
+    const CHAT_COMPLETIONS_PATH: &str = "/chat/completions";
+
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if let Some(prefix) = trimmed.strip_suffix(CHAT_COMPLETIONS_PATH) {
+        if !prefix.is_empty() {
+            return (prefix.to_string(), Some(CHAT_COMPLETIONS_PATH.to_string()));
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
 async fn test_provider_connection(base_url: &str, api_key: &str, model: &str) -> AppResult<()> {
-    let client = LlmClient::openai_compatible(base_url.to_string())
-        .api_key(api_key.to_string())
-        .build()?;
+    let (normalized_base_url, chat_path) = normalize_openai_compatible_endpoint(base_url);
+    let builder = LlmClient::openai_compatible(normalized_base_url).api_key(api_key.to_string());
+    let client = if let Some(path) = chat_path {
+        builder.chat_completions_path(path).build()?
+    } else {
+        builder.build()?
+    };
     client
         .generate(
             GenerateTextRequest::builder(model.to_string())
@@ -368,4 +486,86 @@ async fn test_provider_connection(base_url: &str, api_key: &str, model: &str) ->
         )
         .await?;
     Ok(())
+}
+
+fn is_memory_related_path(path: &str) -> bool {
+    path == "MEMORY.md" || path == "PROFILE.md" || path.starts_with("memory/")
+}
+
+fn chunk_markdown_memory_file(path: &str, content: &str) -> Vec<MemoryChunkInput> {
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    let heading_positions = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('#') {
+                Some((index, trimmed.trim_start_matches('#').trim().to_string()))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut sections = Vec::<(Option<String>, usize, usize)>::new();
+    if heading_positions.is_empty() {
+        sections.push((None, 0, lines.len()));
+    } else {
+        for (index, (start, heading)) in heading_positions.iter().enumerate() {
+            let end = heading_positions
+                .get(index + 1)
+                .map(|entry| entry.0)
+                .unwrap_or(lines.len());
+            sections.push((Some(heading.clone()), *start, end));
+        }
+    }
+
+    let mut chunks = Vec::new();
+    for (heading, section_start, section_end) in sections {
+        let mut cursor = section_start;
+        while cursor < section_end {
+            let chunk_end = cursor.saturating_add(MEMORY_CHUNK_WINDOW).min(section_end);
+            let body = lines[cursor..chunk_end].join("\n");
+            if !body.trim().is_empty() {
+                let line_start = cursor as u32 + 1;
+                let line_end = chunk_end as u32;
+                chunks.push(MemoryChunkInput {
+                    id: format!("{path}:{line_start}:{line_end}"),
+                    path: path.to_string(),
+                    line_start,
+                    line_end,
+                    heading: heading.clone().filter(|item| !item.is_empty()),
+                    content: body,
+                });
+            }
+            cursor = chunk_end;
+        }
+    }
+
+    chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_openai_compatible_endpoint;
+
+    #[test]
+    fn normalize_endpoint_keeps_regular_base_url() {
+        let (base, path) = normalize_openai_compatible_endpoint("https://api.deepseek.com");
+        assert_eq!(base, "https://api.deepseek.com");
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn normalize_endpoint_splits_full_chat_completions_url() {
+        let (base, path) = normalize_openai_compatible_endpoint(
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        );
+        assert_eq!(base, "https://open.bigmodel.cn/api/paas/v4");
+        assert_eq!(path.as_deref(), Some("/chat/completions"));
+    }
 }

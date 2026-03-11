@@ -140,7 +140,7 @@ export function ProviderForm({
         />
         {!showBaseUrlError ? (
           <p className="text-xs text-muted-foreground">
-            填写服务商根地址，例如 `https://api.deepseek.com`（通常无需手动追加 `/v1`）。
+            可填根地址（如 `https://api.deepseek.com`）或完整 chat endpoint（如 `.../chat/completions`）。
           </p>
         ) : null}
         {showBaseUrlError ? (

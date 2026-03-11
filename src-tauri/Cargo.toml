@@ -34,6 +34,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
 tokio-util = "0.7"
 uuid = { version = "1", features = ["serde", "v4"] }
+tiktoken-rs = "0.9.1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,4 +1,11 @@
-import { Server, SlidersHorizontal, X, type LucideIcon } from "lucide-react"
+import {
+  Bot,
+  ChartColumnIncreasing,
+  Server,
+  SlidersHorizontal,
+  X,
+  type LucideIcon,
+} from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Navigate } from "react-router-dom"
 
@@ -6,8 +13,10 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToastContext } from "@/contexts/toast-context"
+import { AgentSettingsSection } from "@/pages/settings/components/agent-settings-section"
 import { ProviderSettingsSection } from "@/pages/settings/components/provider-settings-section"
 import { ThemeSettingsSection } from "@/pages/settings/components/theme-settings-section"
+import { UsageSettingsSection } from "@/pages/settings/components/usage-settings-section"
 import { getAppClient } from "@/lib/app-client"
 import { flattenProviderProfiles } from "@/lib/provider-profiles"
 import type { ProviderAccount, ProviderModel } from "@/lib/types"
@@ -35,14 +44,24 @@ const sectionMeta: Record<SettingsSection, SettingsSectionMeta> = {
     description: "管理界面模式与整体视觉风格",
     icon: SlidersHorizontal,
   },
+  memory: {
+    label: "记忆文件",
+    description: "编辑 MEMORY/PROFILE/HEARTBEAT 与 memory/*.md",
+    icon: Bot,
+  },
   providers: {
     label: "模型服务商",
     description: "创建和编辑 OpenAI 兼容的服务商配置",
     icon: Server,
   },
+  usage: {
+    label: "使用统计",
+    description: "查看请求、Token 消耗与工具调用统计",
+    icon: ChartColumnIncreasing,
+  },
 }
 
-const sections: SettingsSection[] = ["general", "providers"]
+const sections: SettingsSection[] = ["general", "memory", "providers", "usage"]
 
 function errorMessageFromUnknown(error: unknown): string {
   if (typeof error === "string") {
@@ -124,15 +143,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
       return
     }
 
-    if (selectedProviderId === "new") {
-      setSelectedProviderId(providerAccounts[0].id)
-      return
-    }
-
     const hasSelectedProvider = providerAccounts.some(
       (provider) => provider.id === selectedProviderId,
     )
-    if (!hasSelectedProvider) {
+    if (selectedProviderId !== "new" && !hasSelectedProvider) {
       setSelectedProviderId(providerAccounts[0].id)
     }
   }, [
@@ -375,13 +389,20 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
               <ScrollArea className="min-h-0 flex-1">
                 <div className="px-4 py-5 sm:px-6 sm:py-6">
                   {section === "general" ? (
-                    <ThemeSettingsSection
-                      mode={themeMode}
-                      onModeChange={handleThemeModeChange}
-                      onPresetChange={setThemePreset}
-                      preset={themePreset}
-                    />
-                  ) : (
+                    <div className="space-y-4">
+                      <ThemeSettingsSection
+                        mode={themeMode}
+                        onModeChange={handleThemeModeChange}
+                        onPresetChange={setThemePreset}
+                        preset={themePreset}
+                      />
+                      <AgentSettingsSection mode="config" />
+                    </div>
+                  ) : null}
+                  {section === "memory" ? (
+                    <AgentSettingsSection mode="files" />
+                  ) : null}
+                  {section === "providers" ? (
                     <ProviderSettingsSection
                       accountBusy={accountBusy}
                       modelBusyId={modelBusyId}
@@ -396,7 +417,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                       selectedProviderId={selectedProviderId}
                       setSelectedProviderId={handleProviderSelection}
                     />
-                  )}
+                  ) : null}
+                  {section === "usage" ? (
+                    <UsageSettingsSection providerAccounts={providerAccounts} />
+                  ) : null}
                 </div>
               </ScrollArea>
             </section>

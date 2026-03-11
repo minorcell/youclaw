@@ -1,3 +1,10 @@
+//! 文件系统工具共享上下文与公共逻辑。
+//!
+//! 说明：
+//! - `filesystem_list_dir` / `filesystem_read_file` / `filesystem_write_file` 三个工具复用本文件；
+//! - 工具定义放在独立文件，本文件只承载共用能力（路径解析、审批等待、审计日志等）；
+//! - 这样可以保持“一个工具一个文件”，同时避免重复实现。
+
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -5,9 +12,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aquaregia::tool::{tool, Tool, ToolExecError};
 use aquaregia::ToolCall;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use similar::{ChangeTag, TextDiff};
 use tokio::sync::oneshot;
@@ -18,93 +23,47 @@ use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{new_tool_approval, ToolRequestedPayload};
 use crate::backend::{ApprovalService, StorageService, WsHub};
 
-const MAX_READ_LIMIT: usize = 300;
+/// `read_file` 的最大读取行数，避免单次输出过大。
+pub const MAX_READ_LIMIT: usize = 300;
+/// 工具输出的字符上限，防止消息过大导致前端或模型上下文膨胀。
 const MAX_TOOL_OUTPUT_CHARS: usize = 24_000;
+/// 写文件审批超时时间（秒）。
 const APPROVAL_TIMEOUT_SECS: u64 = 600;
 
-#[derive(Debug, Clone, Deserialize)]
-struct FilesystemToolRawInput {
-    action: String,
-    path: String,
-    offset: Option<usize>,
-    limit: Option<usize>,
-    content: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-enum FilesystemToolInput {
-    ListDir {
-        path: String,
-    },
-    ReadFile {
-        path: String,
-        offset: Option<usize>,
-        limit: Option<usize>,
-    },
-    WriteFile {
-        path: String,
-        content: String,
-    },
-}
-
-impl TryFrom<Value> for FilesystemToolInput {
-    type Error = AppError;
-
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
-        let raw = serde_json::from_value::<FilesystemToolRawInput>(value)
-            .map_err(|err| AppError::Validation(format!("invalid filesystem tool args: {err}")))?;
-
-        match raw.action.as_str() {
-            "list_dir" => Ok(Self::ListDir { path: raw.path }),
-            "read_file" => Ok(Self::ReadFile {
-                path: raw.path,
-                offset: raw.offset,
-                limit: raw.limit,
-            }),
-            "write_file" => Ok(Self::WriteFile {
-                path: raw.path,
-                content: raw.content.ok_or_else(|| {
-                    AppError::Validation("`content` is required for write_file".to_string())
-                })?,
-            }),
-            other => Err(AppError::Validation(format!(
-                "unsupported filesystem action `{other}`"
-            ))),
-        }
-    }
-}
-
+/// 文件系统工具共享上下文。
+///
+/// 三个工具（list/read/write）共用同一份运行上下文，
+/// 以便共享审批状态、审计日志和 call_id 映射队列。
 #[derive(Clone)]
 pub struct FilesystemToolContext {
+    /// 会话 ID，用于记录审计日志与事件。
     pub session_id: String,
+    /// Run ID，用于关联当前这轮对话执行流。
     pub run_id: String,
+    /// 工作区根目录，相对路径统一基于该目录解析。
+    pub workspace_root: PathBuf,
+    /// 当前步骤序号（step），用于事件中标记执行进度。
     pub current_step: Arc<AtomicU8>,
+    /// 工具调用队列，用于将流式事件中的 call_id 绑定到实际工具执行。
     pub tool_calls: Arc<Mutex<VecDeque<ToolCall>>>,
+    /// 运行取消令牌，用于审批等待期间快速中断。
     pub cancellation_token: CancellationToken,
+    /// 审批服务（写文件需要）。
     pub approvals: ApprovalService,
+    /// 存储服务（审计日志、数据库写入）。
     pub storage: StorageService,
+    /// WebSocket 事件中心（向前端发工具事件）。
     pub hub: WsHub,
 }
 
 impl FilesystemToolContext {
-    async fn execute(&self, input: FilesystemToolInput) -> Result<Value, ToolExecError> {
-        match input {
-            FilesystemToolInput::ListDir { path } => self.list_dir(&path),
-            FilesystemToolInput::ReadFile {
-                path,
-                offset,
-                limit,
-            } => self.read_file(&path, offset.unwrap_or(0), limit.unwrap_or(200)),
-            FilesystemToolInput::WriteFile { path, content } => {
-                self.write_file(&path, &content).await
-            }
-        }
-        .map_err(|err| ToolExecError::Execution(err.message()))
-    }
-
-    fn list_dir(&self, input_path: &str) -> AppResult<Value> {
-        let resolved = resolve_path(input_path)?;
-        let tool_call = self.claim_tool_call("list_dir", input_path);
+    /// 列出目录内容。
+    ///
+    /// - 相对路径基于 workspace_root
+    /// - 记录 run 级别文件操作审计日志
+    pub fn list_dir(&self, tool_name: &str, input_path: &str) -> AppResult<Value> {
+        let resolved = resolve_path(input_path, &self.workspace_root)?;
+        let tool_call = self.claim_tool_call(tool_name, "list_dir", input_path);
         let entries = fs::read_dir(&resolved)?
             .map(|entry| {
                 let entry = entry?;
@@ -133,14 +92,24 @@ impl FilesystemToolContext {
         }))
     }
 
-    fn read_file(&self, input_path: &str, offset: usize, limit: usize) -> AppResult<Value> {
+    /// 读取文件内容（按行切片）。
+    ///
+    /// - `offset` 为起始行偏移（0-based）
+    /// - `limit` 为最大返回行数，受 MAX_READ_LIMIT 约束
+    pub fn read_file(
+        &self,
+        tool_name: &str,
+        input_path: &str,
+        offset: usize,
+        limit: usize,
+    ) -> AppResult<Value> {
         if !(1..=MAX_READ_LIMIT).contains(&limit) {
             return Err(AppError::Validation(format!(
-                "`limit` must be within 1..={MAX_READ_LIMIT}`"
+                "`limit` 必须位于 1..={MAX_READ_LIMIT}"
             )));
         }
-        let resolved = resolve_path(input_path)?;
-        let tool_call = self.claim_tool_call("read_file", input_path);
+        let resolved = resolve_path(input_path, &self.workspace_root)?;
+        let tool_call = self.claim_tool_call(tool_name, "read_file", input_path);
         let bytes = fs::read(&resolved)?;
         let text = String::from_utf8_lossy(&bytes).to_string();
         let lines = text.lines().collect::<Vec<_>>();
@@ -171,9 +140,18 @@ impl FilesystemToolContext {
         }))
     }
 
-    async fn write_file(&self, input_path: &str, content: &str) -> AppResult<Value> {
-        let resolved = resolve_path(input_path)?;
-        let tool_call = self.claim_tool_call("write_file", input_path);
+    /// 写入文件（覆盖写），并通过审批流程保护写操作。
+    ///
+    /// - 先生成 diff 预览并发起审批事件
+    /// - 审批通过后执行写入并记录审计日志
+    pub async fn write_file(
+        &self,
+        tool_name: &str,
+        input_path: &str,
+        content: &str,
+    ) -> AppResult<Value> {
+        let resolved = resolve_path(input_path, &self.workspace_root)?;
+        let tool_call = self.claim_tool_call(tool_name, "write_file", input_path);
         let previous = fs::read_to_string(&resolved).unwrap_or_default();
         let preview_json = json!({
             "path": resolved.to_string_lossy(),
@@ -256,7 +234,11 @@ impl FilesystemToolContext {
         }))
     }
 
-    fn claim_tool_call(&self, action: &str, input_path: &str) -> ToolCall {
+    /// 从 ToolCall 队列中获取当前调用信息。
+    ///
+    /// 因为工具执行函数拿不到 call_id，运行时会在事件流中
+    /// 先把 ToolCall 压队列，再由这里按顺序弹出绑定。
+    fn claim_tool_call(&self, tool_name: &str, action: &str, input_path: &str) -> ToolCall {
         if let Ok(mut queue) = self.tool_calls.lock() {
             if let Some(call) = queue.pop_front() {
                 return call;
@@ -264,72 +246,31 @@ impl FilesystemToolContext {
         }
         ToolCall {
             call_id: format!("fallback-{action}-{}", input_path),
-            tool_name: "filesystem".to_string(),
-            args_json: json!({ "action": action, "path": input_path }),
+            tool_name: tool_name.to_string(),
+            args_json: json!({ "path": input_path }),
         }
     }
 }
 
-pub fn build_filesystem_tool(context: FilesystemToolContext) -> Tool {
-    tool("filesystem")
-        .description("Access local files with action=list_dir|read_file|write_file. Relative paths resolve from the user's home directory. write_file requires explicit user approval.")
-        .raw_schema(filesystem_tool_schema())
-        .execute_raw(move |value| {
-            let context = context.clone();
-            async move {
-                let input = FilesystemToolInput::try_from(value)
-                    .map_err(|err| ToolExecError::Execution(err.message()))?;
-                context.execute(input).await
-            }
-        })
-}
-
-fn filesystem_tool_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["list_dir", "read_file", "write_file"],
-                "description": "Which filesystem operation to execute."
-            },
-            "path": {
-                "type": "string",
-                "description": "Absolute path, or relative to the user's home directory."
-            },
-            "offset": {
-                "type": ["integer", "null"],
-                "minimum": 0,
-                "description": "Optional start line for read_file."
-            },
-            "limit": {
-                "type": ["integer", "null"],
-                "minimum": 1,
-                "maximum": MAX_READ_LIMIT,
-                "description": "Optional max line count for read_file."
-            },
-            "content": {
-                "type": ["string", "null"],
-                "description": "Required only for write_file."
-            }
-        },
-        "required": ["action", "path"]
-    })
-}
-
-fn resolve_path(input_path: &str) -> AppResult<PathBuf> {
+/// 将输入路径解析成绝对路径。
+///
+/// - 绝对路径：原样使用
+/// - 相对路径：拼接到 workspace_root
+/// - 最后统一做规范化，去掉 `.` / `..`
+fn resolve_path(input_path: &str, workspace_root: &Path) -> AppResult<PathBuf> {
     let path = Path::new(input_path);
     let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        let home = dirs::home_dir()
-            .ok_or_else(|| AppError::Io("could not resolve user home directory".to_string()))?;
-        home.join(path)
+        workspace_root.join(path)
     };
     Ok(normalize_path(&joined))
 }
 
+/// 归一化路径中的 `.` / `..` 片段。
+///
+/// 这里不做权限判断，仅做语义归一化；
+/// 具体可写范围由上层 workspace / 审批策略控制。
 fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -346,6 +287,9 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// 对长文本做截断，避免工具输出过大。
+///
+/// 按字符数截断而非字节数，避免多字节字符被切断。
 fn truncate(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
@@ -355,6 +299,9 @@ fn truncate(text: &str, limit: usize) -> String {
     out
 }
 
+/// 生成可读 diff 预览，供写文件审批弹窗展示。
+///
+/// 只保留前 240 行变化，保证审批弹窗可读且性能稳定。
 fn build_diff_preview(previous: &str, next: &str) -> String {
     let diff = TextDiff::from_lines(previous, next);
     let mut lines = Vec::new();
@@ -373,6 +320,12 @@ fn build_diff_preview(previous: &str, next: &str) -> String {
     lines.join("\n")
 }
 
+/// 等待审批结果，支持超时与取消信号。
+///
+/// 返回值：
+/// - `Ok(true)`：审批通过
+/// - `Ok(false)`：审批拒绝
+/// - `Err(...)`：超时/取消/通道关闭
 async fn wait_for_approval(
     receiver: oneshot::Receiver<bool>,
     cancellation_token: &CancellationToken,
@@ -397,7 +350,8 @@ enum ApprovalWaitError {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_diff_preview, filesystem_tool_schema, resolve_path};
+    use super::{build_diff_preview, resolve_path};
+    use std::path::Path;
 
     #[test]
     fn diff_preview_marks_insertions() {
@@ -407,16 +361,18 @@ mod tests {
 
     #[test]
     fn relative_paths_resolve_without_error() {
-        let path = resolve_path("Desktop/example.txt").expect("resolved path");
+        let workspace_root = Path::new("/tmp/bgtclaw-workspace");
+        let path = resolve_path("Desktop/example.txt", workspace_root).expect("resolved path");
         assert!(path.is_absolute());
+        assert!(path.starts_with(workspace_root));
     }
 
     #[test]
-    fn tool_schema_has_object_root() {
-        let schema = filesystem_tool_schema();
-        assert_eq!(
-            schema.get("type").and_then(|value| value.as_str()),
-            Some("object")
-        );
+    fn absolute_paths_are_preserved() {
+        let workspace_root = Path::new("/tmp/bgtclaw-workspace");
+        let absolute = Path::new("/tmp/absolute/example.txt");
+        let path = resolve_path(absolute.to_string_lossy().as_ref(), workspace_root)
+            .expect("resolved path");
+        assert_eq!(path, absolute);
     }
 }

@@ -91,6 +91,87 @@ pub struct ChatRun {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentActiveHoursConfig {
+    pub start: String,
+    pub end: String,
+}
+
+impl Default for AgentActiveHoursConfig {
+    fn default() -> Self {
+        Self {
+            start: "08:00".to_string(),
+            end: "22:00".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentHeartbeatConfig {
+    pub enabled: bool,
+    pub every: String,
+    pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_hours: Option<AgentActiveHoursConfig>,
+}
+
+impl Default for AgentHeartbeatConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            every: "30m".to_string(),
+            target: "main".to_string(),
+            active_hours: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfigPayload {
+    pub max_steps: u8,
+    pub max_input_tokens: u32,
+    pub compact_ratio: f32,
+    pub keep_recent: u32,
+    pub language: String,
+    pub heartbeat: AgentHeartbeatConfig,
+}
+
+impl Default for AgentConfigPayload {
+    fn default() -> Self {
+        Self {
+            max_steps: 8,
+            max_input_tokens: 32768,
+            compact_ratio: 0.7,
+            keep_recent: 8,
+            language: "zh".to_string(),
+            heartbeat: AgentHeartbeatConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfigUpdateRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_ratio: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_recent: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heartbeat: Option<AgentHeartbeatConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFileInfo {
+    pub path: String,
+    pub size: u64,
+    pub modified_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BootstrapPayload {
     pub provider_profiles: Vec<ProviderProfile>,
@@ -100,6 +181,10 @@ pub struct BootstrapPayload {
     pub approvals: Vec<ToolApproval>,
     pub runs: Vec<ChatRun>,
     pub last_opened_session_id: Option<String>,
+    #[serde(default)]
+    pub agent_config: AgentConfigPayload,
+    #[serde(default)]
+    pub workspace_files: Vec<WorkspaceFileInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,6 +338,268 @@ pub struct ToolApprovalResolveRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFileReadRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFileReadPayload {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFileWriteRequest {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFileWritePayload {
+    pub path: String,
+    pub written: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceFilesPayload {
+    pub files: Vec<WorkspaceFileInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySearchRequest {
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_results: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_score: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySearchHit {
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub snippet: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySearchPayload {
+    pub query: String,
+    pub hits: Vec<MemorySearchHit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryGetRequest {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryGetPayload {
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub total_lines: u32,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryReindexPayload {
+    pub indexed_chunks: u32,
+    pub files_indexed: u32,
+}
+
+pub const USAGE_RANGE_24H: &str = "24h";
+pub const USAGE_RANGE_7D: &str = "7d";
+pub const USAGE_RANGE_30D: &str = "30d";
+pub const USAGE_RANGE_ALL: &str = "all";
+
+fn default_usage_range() -> String {
+    USAGE_RANGE_7D.to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSummaryRequest {
+    #[serde(default = "default_usage_range")]
+    pub range: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageLogsListRequest {
+    #[serde(default = "default_usage_range")]
+    pub range: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail_logged: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageStatsListRequest {
+    #[serde(default = "default_usage_range")]
+    pub range: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageLogDetailRequest {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSettingsUpdateRequest {
+    pub detail_logging_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsagePage {
+    pub page: u32,
+    pub page_size: u32,
+    pub total: u64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSummaryPayload {
+    pub range: String,
+    pub total_requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub total_tokens: u64,
+    pub input_cache_read_tokens: u64,
+    pub input_cache_write_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageSettingsPayload {
+    pub detail_logging_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageLogItem {
+    pub run_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub user_message: String,
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
+    pub model: Option<String>,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub detail_logged: bool,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub total_tokens: u64,
+    pub input_cache_read_tokens: u64,
+    pub input_cache_write_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageLogsPayload {
+    pub page: UsagePage,
+    pub items: Vec<UsageLogItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageProviderStatsItem {
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub request_count: u64,
+    pub completed_count: u64,
+    pub failed_count: u64,
+    pub cancelled_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub input_cache_read_tokens: u64,
+    pub input_cache_write_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageProviderStatsPayload {
+    pub page: UsagePage,
+    pub items: Vec<UsageProviderStatsItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageModelStatsItem {
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
+    pub model: Option<String>,
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub request_count: u64,
+    pub completed_count: u64,
+    pub failed_count: u64,
+    pub cancelled_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub input_cache_read_tokens: u64,
+    pub input_cache_write_tokens: u64,
+    pub avg_duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageModelStatsPayload {
+    pub page: UsagePage,
+    pub items: Vec<UsageModelStatsItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageToolStatsItem {
+    pub tool_name: String,
+    pub tool_action: Option<String>,
+    pub call_count: u64,
+    pub success_count: u64,
+    pub error_count: u64,
+    pub avg_duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageToolStatsPayload {
+    pub page: UsagePage,
+    pub items: Vec<UsageToolStatsItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageToolLogItem {
+    pub id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub tool_name: String,
+    pub tool_action: Option<String>,
+    pub status: String,
+    pub duration_ms: Option<u64>,
+    pub is_error: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageLogDetailPayload {
+    pub run_id: String,
+    pub tools: Vec<UsageToolLogItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersChangedPayload {
     pub provider_profiles: Vec<ProviderProfile>,
     pub provider_accounts: Vec<ProviderAccount>,
@@ -354,7 +701,7 @@ pub struct ToolFinishedPayload {
 pub struct RunFinishedPayload {
     pub session_id: String,
     pub run: ChatRun,
-    pub messages: Vec<ChatMessage>,
+    pub new_messages: Vec<ChatMessage>,
     pub usage_total: Usage,
 }
 
@@ -374,6 +721,23 @@ pub struct RunCancelledPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatPayload {
     pub server_time: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMemoryCompactedPayload {
+    pub session_id: String,
+    pub compacted_messages: u32,
+    pub summary_preview: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentHeartbeatExecutedPayload {
+    pub session_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

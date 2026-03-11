@@ -103,11 +103,43 @@ export interface ChatRun {
   error_message: string | null
 }
 
+export interface AgentActiveHoursConfig {
+  start: string
+  end: string
+}
+
+export interface AgentHeartbeatConfig {
+  enabled: boolean
+  every: string
+  target: string
+  active_hours?: AgentActiveHoursConfig | null
+}
+
+export interface AgentConfigPayload {
+  max_steps: number
+  max_input_tokens: number
+  compact_ratio: number
+  keep_recent: number
+  language: string
+  heartbeat: AgentHeartbeatConfig
+}
+
+export interface WorkspaceFileInfo {
+  path: string
+  size: number
+  modified_at: string
+}
+
 export interface Usage {
   input_tokens: number
+  input_no_cache_tokens: number
+  input_cache_read_tokens: number
+  input_cache_write_tokens: number
   output_tokens: number
+  output_text_tokens: number
   reasoning_tokens: number
   total_tokens: number
+  raw_usage?: Record<string, unknown> | null
 }
 
 export interface ToolCall {
@@ -141,6 +173,8 @@ export interface BootstrapPayload {
   approvals: ToolApproval[]
   runs: ChatRun[]
   last_opened_session_id: string | null
+  agent_config: AgentConfigPayload
+  workspace_files: WorkspaceFileInfo[]
 }
 
 export interface ProvidersChangedPayload {
@@ -224,7 +258,7 @@ export interface ToolFinishedPayload {
 export interface RunFinishedPayload {
   session_id: string
   run: ChatRun
-  messages: ChatMessage[]
+  new_messages: ChatMessage[]
   usage_total: Usage
 }
 
@@ -237,6 +271,19 @@ export interface RunFailedPayload {
 export interface RunCancelledPayload {
   session_id: string
   run_id: string
+}
+
+export interface AgentMemoryCompactedPayload {
+  session_id: string
+  compacted_messages: number
+  summary_preview: string
+}
+
+export interface AgentHeartbeatExecutedPayload {
+  session_id: string
+  status: string
+  run_id?: string | null
+  reason?: string | null
 }
 
 export type TimelineItem =
@@ -266,4 +313,128 @@ export interface RunViewState {
   timeline: TimelineItem[]
   usageTotal?: Usage
   error?: string
+}
+
+export type UsageStatsRange = "24h" | "7d" | "30d" | "all"
+
+export interface UsagePage {
+  page: number
+  page_size: number
+  total: number
+  has_more: boolean
+}
+
+export interface UsageSummaryPayload {
+  range: UsageStatsRange
+  total_requests: number
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  total_tokens: number
+  input_cache_read_tokens: number
+  input_cache_write_tokens: number
+}
+
+export interface UsageSettingsPayload {
+  detail_logging_enabled: boolean
+}
+
+export interface UsageLogItem {
+  run_id: string
+  session_id: string
+  status: string
+  user_message: string
+  provider_id: string | null
+  provider_name: string | null
+  model_id: string | null
+  model_name: string | null
+  model: string | null
+  started_at: string
+  finished_at: string | null
+  duration_ms: number | null
+  detail_logged: boolean
+  input_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  total_tokens: number
+  input_cache_read_tokens: number
+  input_cache_write_tokens: number
+}
+
+export interface UsageLogsPayload {
+  page: UsagePage
+  items: UsageLogItem[]
+}
+
+export interface UsageProviderStatsItem {
+  provider_id: string | null
+  provider_name: string | null
+  request_count: number
+  completed_count: number
+  failed_count: number
+  cancelled_count: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  input_cache_read_tokens: number
+  input_cache_write_tokens: number
+}
+
+export interface UsageProviderStatsPayload {
+  page: UsagePage
+  items: UsageProviderStatsItem[]
+}
+
+export interface UsageModelStatsItem {
+  model_id: string | null
+  model_name: string | null
+  model: string | null
+  provider_id: string | null
+  provider_name: string | null
+  request_count: number
+  completed_count: number
+  failed_count: number
+  cancelled_count: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  input_cache_read_tokens: number
+  input_cache_write_tokens: number
+  avg_duration_ms: number | null
+}
+
+export interface UsageModelStatsPayload {
+  page: UsagePage
+  items: UsageModelStatsItem[]
+}
+
+export interface UsageToolStatsItem {
+  tool_name: string
+  tool_action: string | null
+  call_count: number
+  success_count: number
+  error_count: number
+  avg_duration_ms: number | null
+}
+
+export interface UsageToolStatsPayload {
+  page: UsagePage
+  items: UsageToolStatsItem[]
+}
+
+export interface UsageToolLogItem {
+  id: string
+  run_id: string
+  session_id: string
+  tool_name: string
+  tool_action: string | null
+  status: string
+  duration_ms: number | null
+  is_error: boolean
+  created_at: string
+}
+
+export interface UsageLogDetailPayload {
+  run_id: string
+  tools: UsageToolLogItem[]
 }
