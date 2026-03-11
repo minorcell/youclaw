@@ -1,4 +1,4 @@
-import type { WsEnvelope } from "@/lib/types"
+import type { WsEnvelope } from '@/lib/types'
 
 interface PendingRequest {
   resolve: (value: any) => void
@@ -9,7 +9,7 @@ interface PendingRequest {
 interface AppWsClientOptions {
   endpoint: string
   onEnvelope: (envelope: WsEnvelope) => void
-  onStatusChange: (status: "connecting" | "open" | "closed" | "error") => void
+  onStatusChange: (status: 'connecting' | 'open' | 'closed' | 'error') => void
 }
 
 export class AppWsClient {
@@ -24,19 +24,19 @@ export class AppWsClient {
 
   connect() {
     this.manualClose = false
-    this.options.onStatusChange("connecting")
+    this.options.onStatusChange('connecting')
     this.socket = new WebSocket(this.options.endpoint)
 
-    this.socket.addEventListener("open", () => {
+    this.socket.addEventListener('open', () => {
       this.reconnectAttempt = 0
-      this.options.onStatusChange("open")
+      this.options.onStatusChange('open')
       this.startHeartbeat()
     })
 
-    this.socket.addEventListener("message", (event) => {
+    this.socket.addEventListener('message', (event) => {
       const envelope = JSON.parse(String(event.data)) as WsEnvelope
       const pending = this.pending.get(envelope.id)
-      if (envelope.kind === "response" && pending) {
+      if (envelope.kind === 'response' && pending) {
         this.pending.delete(envelope.id)
         if (envelope.ok === false && envelope.error) {
           pending.reject(new Error(envelope.error.message))
@@ -51,16 +51,16 @@ export class AppWsClient {
       this.options.onEnvelope(envelope)
     })
 
-    this.socket.addEventListener("close", () => {
+    this.socket.addEventListener('close', () => {
       this.stopHeartbeat()
-      this.options.onStatusChange("closed")
+      this.options.onStatusChange('closed')
       if (!this.manualClose) {
         this.scheduleReconnect()
       }
     })
 
-    this.socket.addEventListener("error", () => {
-      this.options.onStatusChange("error")
+    this.socket.addEventListener('error', () => {
+      this.options.onStatusChange('error')
     })
   }
 
@@ -81,12 +81,12 @@ export class AppWsClient {
     options?: { skipDispatch?: boolean },
   ): Promise<TResponse> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error("WebSocket is not connected")
+      throw new Error('WebSocket is not connected')
     }
 
     const envelope: WsEnvelope = {
       id: crypto.randomUUID(),
-      kind: "request",
+      kind: 'request',
       name,
       payload,
     }
@@ -100,7 +100,7 @@ export class AppWsClient {
   private startHeartbeat() {
     this.stopHeartbeat()
     this.heartbeatTimer = window.setInterval(() => {
-      void this.request("bootstrap.get", { heartbeat: true }, { skipDispatch: true }).catch(() => {
+      void this.request('bootstrap.get', { heartbeat: true }, { skipDispatch: true }).catch(() => {
         this.socket?.close()
       })
     }, 15_000)

@@ -1,9 +1,28 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo } from "react"
 import { Navigate, useLocation, useNavigate } from "react-router-dom"
 
+import { useToastContext } from "@/contexts/toast-context"
 import { getAppClient } from "@/lib/app-client"
 import { flattenProviderProfiles } from "@/lib/provider-profiles"
 import { useAppStore } from "@/store/app-store"
+
+function errorMessageFromUnknown(error: unknown): string {
+  if (typeof error === "string") {
+    return error
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message
+  }
+  return String(error)
+}
 
 export function HomeRedirectPage() {
   const location = useLocation()
@@ -56,7 +75,7 @@ function CreateSessionAndRedirect({
   search: string
 }) {
   const navigate = useNavigate()
-  const [error, setError] = useState<string | null>(null)
+  const { error: toastError } = useToastContext()
 
   useEffect(() => {
     let cancelled = false
@@ -81,7 +100,8 @@ function CreateSessionAndRedirect({
         )
       } catch (nextError) {
         if (cancelled) return
-        setError(String(nextError))
+        toastError(errorMessageFromUnknown(nextError))
+        navigate("/welcome/provider", { replace: true })
       }
     }
 
@@ -90,20 +110,7 @@ function CreateSessionAndRedirect({
     return () => {
       cancelled = true
     }
-  }, [navigate, providerProfileId, search])
-
-  if (error) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-4">
-        <div className="rounded-3xl border border-destructive/30 bg-card px-8 py-6 text-center shadow-none">
-          <p className="text-xs uppercase tracking-[0.24em] text-destructive/80">
-            Session Init Failed
-          </p>
-          <p className="mt-3 text-sm text-destructive">{error}</p>
-        </div>
-      </div>
-    )
-  }
+  }, [navigate, providerProfileId, search, toastError])
 
   return <LoadingScreen />
 }
@@ -114,9 +121,9 @@ export function LoadingScreen() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-180 rounded-3xl border border-border bg-card px-8 py-6 text-center shadow-none">
+      <div className="max-w-180 rounded-3xl bg-card px-8 py-6 text-center shadow-none">
         <p className="text-xs font-serif uppercase tracking-[0.24em] text-muted-foreground">
-          BgtClaw
+          YouClaw
         </p>
         <h1 className="mt-3 text-2xl font-serif font-semibold text-foreground">
           Connecting to local agent runtime…
@@ -125,7 +132,7 @@ export function LoadingScreen() {
           ws: {wsStatus}
         </p>
         {lastError ? (
-          <div className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-left">
+          <div className="mt-4 rounded-2xl bg-destructive/10 px-4 py-3 text-left">
             <p className="text-xs uppercase tracking-[0.18em] text-destructive/80">
               bootstrap failed
             </p>

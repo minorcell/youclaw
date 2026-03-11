@@ -6,18 +6,43 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useToastContext } from "@/contexts/toast-context"
 import { getAppClient } from "@/lib/app-client"
 import type { ChatSession, ProviderAccount, ProviderModel } from "@/lib/types"
 import { useAppStore } from "@/store/app-store"
 
+function errorMessageFromUnknown(error: unknown): string {
+  if (typeof error === "string") {
+    return error
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message
+  }
+  return String(error)
+}
+
 export function ProviderOnboardingPage() {
   const navigate = useNavigate()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { error: toastError } = useToastContext()
   const providerAccounts = useAppStore((state) => state.providerAccounts)
   const sessions = useAppStore((state) => state.sessions)
-  const firstProvider = useMemo(() => providerAccounts[0] ?? null, [providerAccounts])
-  const firstModel = useMemo(() => firstProvider?.models[0] ?? null, [firstProvider])
+  const firstProvider = useMemo(
+    () => providerAccounts[0] ?? null,
+    [providerAccounts],
+  )
+  const firstModel = useMemo(
+    () => firstProvider?.models[0] ?? null,
+    [firstProvider],
+  )
 
   const initial = useMemo(
     () => ({
@@ -35,7 +60,10 @@ export function ProviderOnboardingPage() {
     setForm(initial)
   }, [initial])
 
-  async function ensureSession(providerProfileId: string, existingSessions: ChatSession[]) {
+  async function ensureSession(
+    providerProfileId: string,
+    existingSessions: ChatSession[],
+  ) {
     const client = getAppClient()
     if (existingSessions.length > 0) {
       const target = existingSessions[0]
@@ -57,7 +85,6 @@ export function ProviderOnboardingPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setError(null)
     setBusy(true)
     try {
       const client = getAppClient()
@@ -88,7 +115,7 @@ export function ProviderOnboardingPage() {
 
       await ensureSession(targetModel.id, sessions)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      toastError(errorMessageFromUnknown(err))
     } finally {
       setBusy(false)
     }
@@ -98,63 +125,25 @@ export function ProviderOnboardingPage() {
     <main className="box-border flex min-h-dvh flex-col items-center justify-center bg-background px-4 py-12 text-foreground">
       {/* Brand */}
       <div className="mb-10 select-none text-center">
-        <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-          运行在本地的 AI 助手
-        </p>
         <h1 className="mt-2 font-serif text-[3.2rem] font-semibold leading-none tracking-tight text-[#224c37]">
-          BgtClaw
+          成为你，YouClaw
         </h1>
         <p className="mt-3 text-sm text-muted-foreground">
-          连接你的 AI 模型，开始与本地 Agent 协作
+          连接 AI 模型，开始与“你”协作
         </p>
-      </div>
-
-      {/* Feature highlights */}
-      <div className="mb-8 grid w-full max-w-140 select-none grid-cols-3 gap-3">
-        {[
-          {
-            icon: <FolderOpen className="h-4 w-4" />,
-            label: "文件系统工具",
-            desc: "读写本地文件",
-          },
-          {
-            icon: <MessageSquare className="h-4 w-4" />,
-            label: "多会话管理",
-            desc: "独立上下文",
-          },
-          {
-            icon: <ShieldCheck className="h-4 w-4" />,
-            label: "完全本地",
-            desc: "无登录，无云端",
-          },
-        ].map(({ icon, label, desc }) => (
-          <Card
-            key={label}
-            className="flex flex-col items-start gap-2 rounded-2xl border-border/60 bg-card/50 px-4 py-3 shadow-none"
-          >
-            <span className="text-muted-foreground">{icon}</span>
-            <div>
-              <p className="text-xs font-medium text-foreground">{label}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{desc}</p>
-            </div>
-          </Card>
-        ))}
       </div>
 
       {/* Config form */}
       <div className="w-full max-w-140">
-        <Card className="rounded-3xl border-border/60 p-6 shadow-none">
-          <p className="mb-1 text-xs uppercase tracking-[0.22em] text-muted-foreground">
-            第一步
-          </p>
+        <Card className="rounded-3xl p-6 shadow-none">
           <h2 className="mb-5 font-serif text-lg font-semibold text-foreground">
-            配置 AI Provider
+            配置模型服务商
           </h2>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Provider 名称
+                服务商名称
               </Label>
               <Input
                 value={form.profile_name}
@@ -166,7 +155,7 @@ export function ProviderOnboardingPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Base URL
+                请求地址
               </Label>
               <Input
                 value={form.base_url}
@@ -178,7 +167,7 @@ export function ProviderOnboardingPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                API Key
+                API KEY
               </Label>
               <Input
                 type="password"
@@ -191,7 +180,7 @@ export function ProviderOnboardingPage() {
             </div>
             <div className="space-y-2">
               <Label className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                模型
+                模型名称
               </Label>
               <Input
                 value={form.model}
@@ -201,11 +190,6 @@ export function ProviderOnboardingPage() {
                 placeholder="deepseek-chat"
               />
             </div>
-            {error ? (
-              <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2">
-                <p className="text-xs text-destructive">{error}</p>
-              </div>
-            ) : null}
             <Button className="w-full" disabled={busy} type="submit">
               {busy ? "连接中..." : "开始使用"}
             </Button>

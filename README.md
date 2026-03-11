@@ -1,4 +1,4 @@
-# BgtClaw
+# YouClaw
 
 本项目是一个基于 `Tauri + React + TypeScript + Rust` 的本地桌面 Agent MVP。
 
@@ -63,7 +63,7 @@ cargo test
 ## 运行时数据
 
 应用运行时数据默认写入 Tauri 的 `app_data_dir`。
-如果该目录不可用，会回退到当前工作目录下的 `./.bgtclaw-data/`。
+如果该目录不可用，会回退到当前工作目录下的 `./.youclaw-data/`。
 
 ## 说明
 

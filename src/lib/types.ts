@@ -1,4 +1,4 @@
-export type WsKind = "request" | "response" | "event"
+export type WsKind = 'request' | 'response' | 'event'
 
 export interface WsErrorPayload {
   code: string
@@ -10,6 +10,7 @@ export interface WsEnvelope<T = unknown> {
   kind: WsKind
   name: string
   payload: T
+  turn_id?: string
   ok?: boolean
   error?: WsErrorPayload
 }
@@ -51,7 +52,7 @@ export interface ChatSession {
   provider_profile_id: string | null
   created_at: string
   updated_at: string
-  last_run_at: string | null
+  last_turn_at: string | null
 }
 
 export type ContentPart =
@@ -68,16 +69,16 @@ export interface ReasoningPart {
 export interface ChatMessage {
   id: string
   session_id: string
-  role: "system" | "user" | "assistant" | "tool"
+  role: 'system' | 'user' | 'assistant' | 'tool'
   parts_json: ContentPart[]
-  run_id: string | null
+  turn_id: string | null
   created_at: string
 }
 
 export interface ToolApproval {
   id: string
   session_id: string
-  run_id: string
+  turn_id: string
   call_id: string
   action: string
   path: string
@@ -92,7 +93,7 @@ export interface ToolApproval {
   resolved_at: string | null
 }
 
-export interface ChatRun {
+export interface ChatTurn {
   id: string
   session_id: string
   status: string
@@ -103,25 +104,12 @@ export interface ChatRun {
   error_message: string | null
 }
 
-export interface AgentActiveHoursConfig {
-  start: string
-  end: string
-}
-
-export interface AgentHeartbeatConfig {
-  enabled: boolean
-  every: string
-  target: string
-  active_hours?: AgentActiveHoursConfig | null
-}
-
 export interface AgentConfigPayload {
   max_steps: number
   max_input_tokens: number
   compact_ratio: number
   keep_recent: number
   language: string
-  heartbeat: AgentHeartbeatConfig
 }
 
 export interface WorkspaceFileInfo {
@@ -171,7 +159,7 @@ export interface BootstrapPayload {
   sessions: ChatSession[]
   messages: ChatMessage[]
   approvals: ToolApproval[]
-  runs: ChatRun[]
+  turns: ChatTurn[]
   last_opened_session_id: string | null
   agent_config: AgentConfigPayload
   workspace_files: WorkspaceFileInfo[]
@@ -187,22 +175,22 @@ export interface SessionsChangedPayload {
   last_opened_session_id: string | null
 }
 
-export interface RunStartedPayload {
+export interface TurnStartedPayload {
   session_id: string
-  run: ChatRun
+  turn: ChatTurn
   user_message: ChatMessage
 }
 
 export interface TokenPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
   text: string
 }
 
 export interface ReasoningStartedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
   block_id: string
   provider_metadata?: Record<string, unknown>
@@ -210,7 +198,7 @@ export interface ReasoningStartedPayload {
 
 export interface ReasoningTokenPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
   block_id: string
   text: string
@@ -219,7 +207,7 @@ export interface ReasoningTokenPayload {
 
 export interface ReasoningFinishedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
   block_id: string
   provider_metadata?: Record<string, unknown>
@@ -227,19 +215,19 @@ export interface ReasoningFinishedPayload {
 
 export interface StepStartedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
 }
 
 export interface StepFinishedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: AgentStep
 }
 
 export interface ToolRequestedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
   state: string
   tool_call: ToolCall
@@ -248,29 +236,34 @@ export interface ToolRequestedPayload {
 
 export interface ToolFinishedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   step: number
   tool_call: ToolCall
   tool_result: ToolResult
   duration_ms: number
 }
 
-export interface RunFinishedPayload {
+export interface TurnFinishedPayload {
   session_id: string
-  run: ChatRun
+  turn: ChatTurn
   new_messages: ChatMessage[]
   usage_total: Usage
 }
 
-export interface RunFailedPayload {
+export interface TurnFailedPayload {
   session_id: string
-  run_id: string
+  turn_id: string
   error: string
 }
 
-export interface RunCancelledPayload {
+export interface TurnCancelledPayload {
   session_id: string
-  run_id: string
+  turn_id: string
+}
+
+export interface TurnStepsListPayload {
+  turn_id: string
+  steps: AgentStep[]
 }
 
 export interface AgentMemoryCompactedPayload {
@@ -279,26 +272,19 @@ export interface AgentMemoryCompactedPayload {
   summary_preview: string
 }
 
-export interface AgentHeartbeatExecutedPayload {
-  session_id: string
-  status: string
-  run_id?: string | null
-  reason?: string | null
-}
-
 export type TimelineItem =
   | {
       id: string
-      kind: "step"
+      kind: 'step'
       step: number
-      status: "started" | "finished"
+      status: 'started' | 'finished'
       outputText: string
       reasoningText: string
       usage?: Usage
     }
   | {
       id: string
-      kind: "tool"
+      kind: 'tool'
       step: number
       state: string
       toolCall: ToolCall
@@ -307,15 +293,45 @@ export type TimelineItem =
       approval?: ToolApproval | null
     }
 
-export interface RunViewState {
-  run: ChatRun
+export interface TurnViewState {
+  turn: ChatTurn
   sessionId: string
   timeline: TimelineItem[]
+  liveStepsById: Record<string, Extract<TimelineItem, { kind: 'step' }>>
   usageTotal?: Usage
   error?: string
 }
 
-export type UsageStatsRange = "24h" | "7d" | "30d" | "all"
+// --- Render units for turn-centric message rendering ---
+
+export interface ToolRenderUnit {
+  callId: string
+  toolName: string
+  argsJson: Record<string, unknown>
+  result?: ToolResult
+  durationMs?: number
+  isLive: boolean
+  approval?: ToolApproval | null
+}
+
+export interface StepRenderUnit {
+  step: number
+  isLive: boolean
+  outputText: string
+  reasoningText: string
+  tools: ToolRenderUnit[]
+}
+
+export interface TurnRenderUnit {
+  turnId: string
+  userText: string
+  steps: StepRenderUnit[]
+  status: string
+  isActive: boolean
+  error?: string
+}
+
+export type UsageStatsRange = '24h' | '7d' | '30d' | 'all'
 
 export interface UsagePage {
   page: number
@@ -326,7 +342,9 @@ export interface UsagePage {
 
 export interface UsageSummaryPayload {
   range: UsageStatsRange
-  total_requests: number
+  total_turns: number
+  total_steps: number
+  avg_steps_per_turn: number
   input_tokens: number
   output_tokens: number
   reasoning_tokens: number
@@ -340,7 +358,7 @@ export interface UsageSettingsPayload {
 }
 
 export interface UsageLogItem {
-  run_id: string
+  turn_id: string
   session_id: string
   status: string
   user_message: string
@@ -352,6 +370,7 @@ export interface UsageLogItem {
   started_at: string
   finished_at: string | null
   duration_ms: number | null
+  step_count: number
   detail_logged: boolean
   input_tokens: number
   output_tokens: number
@@ -369,7 +388,7 @@ export interface UsageLogsPayload {
 export interface UsageProviderStatsItem {
   provider_id: string | null
   provider_name: string | null
-  request_count: number
+  turn_count: number
   completed_count: number
   failed_count: number
   cancelled_count: number
@@ -391,7 +410,7 @@ export interface UsageModelStatsItem {
   model: string | null
   provider_id: string | null
   provider_name: string | null
-  request_count: number
+  turn_count: number
   completed_count: number
   failed_count: number
   cancelled_count: number
@@ -424,7 +443,7 @@ export interface UsageToolStatsPayload {
 
 export interface UsageToolLogItem {
   id: string
-  run_id: string
+  turn_id: string
   session_id: string
   tool_name: string
   tool_action: string | null
@@ -435,6 +454,6 @@ export interface UsageToolLogItem {
 }
 
 export interface UsageLogDetailPayload {
-  run_id: string
+  turn_id: string
   tools: UsageToolLogItem[]
 }

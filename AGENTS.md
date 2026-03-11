@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-- **名称**: BgtClaw (包工头)
+- **名称**: YouClaw
 - **技术栈**: Tauri 2 + React 19 + TypeScript + Rust
 - **前端**: React 19, react-router-dom, zustand, shadcn-style UI, Tailwind CSS v4
 - **后端**: Rust + axum WebSocket 服务器, rusqlite

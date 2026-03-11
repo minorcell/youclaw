@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "jsxSingleQuote": true,
+  "semi": false,
+  "ignorePatterns": ["dist/**", "node_modules/**", "**/*.md", "**/*.markdown", "**/*.mdx"]
+}

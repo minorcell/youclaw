@@ -44,6 +44,8 @@ export function AppLayout() {
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
   )
+  const resizeAnimationFrameRef = useRef<number | null>(null)
+  const pendingSidebarWidthRef = useRef<number | null>(null)
 
   const sessionIdFromRoute = params.sessionId ?? null
   const isSettingsOpen = searchParams.get("settings") === "1"
@@ -83,6 +85,38 @@ export function AppLayout() {
     return clampValue(width, SIDEBAR_MIN_WIDTH, getSidebarMaxWidth())
   }
 
+  function setSidebarWidthIfNeeded(nextWidth: number) {
+    setSidebarWidth((currentWidth) =>
+      currentWidth === nextWidth ? currentWidth : nextWidth,
+    )
+  }
+
+  function flushSidebarResizeFrame() {
+    if (resizeAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(resizeAnimationFrameRef.current)
+      resizeAnimationFrameRef.current = null
+    }
+    if (pendingSidebarWidthRef.current !== null) {
+      setSidebarWidthIfNeeded(pendingSidebarWidthRef.current)
+      pendingSidebarWidthRef.current = null
+    }
+  }
+
+  function scheduleSidebarResizeWidth(nextWidth: number) {
+    pendingSidebarWidthRef.current = nextWidth
+    if (resizeAnimationFrameRef.current !== null) {
+      return
+    }
+    resizeAnimationFrameRef.current = requestAnimationFrame(() => {
+      resizeAnimationFrameRef.current = null
+      if (pendingSidebarWidthRef.current === null) {
+        return
+      }
+      setSidebarWidthIfNeeded(pendingSidebarWidthRef.current)
+      pendingSidebarWidthRef.current = null
+    })
+  }
+
   useEffect(() => {
     function syncSidebarWidthToViewport() {
       setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth))
@@ -92,6 +126,12 @@ export function AppLayout() {
     window.addEventListener("resize", syncSidebarWidthToViewport)
     return () => {
       window.removeEventListener("resize", syncSidebarWidthToViewport)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      flushSidebarResizeFrame()
     }
   }, [])
 
@@ -127,12 +167,11 @@ export function AppLayout() {
 
   async function handleCreateSession() {
     const fallbackProvider = providers[0] ?? null
-    const providerForNewSession =
-      activeSession?.provider_profile_id
-        ? (providers.find(
-            (item) => item.id === activeSession.provider_profile_id,
-          ) ?? fallbackProvider)
-        : fallbackProvider
+    const providerForNewSession = activeSession?.provider_profile_id
+      ? (providers.find(
+          (item) => item.id === activeSession.provider_profile_id,
+        ) ?? fallbackProvider)
+      : fallbackProvider
 
     const created = await getAppClient().request<{ id: string }>(
       "sessions.create",
@@ -155,6 +194,13 @@ export function AppLayout() {
     if (targetSessionId === sessionIdFromRoute) {
       navigate({ pathname: "/", search: isSettingsOpen ? "?settings=1" : "" })
     }
+  }
+
+  async function handleRenameSession(targetSessionId: string, title: string) {
+    await getAppClient().request("sessions.rename", {
+      session_id: targetSessionId,
+      title,
+    })
   }
 
   function handleSelectSession(targetSessionId: string) {
@@ -184,11 +230,12 @@ export function AppLayout() {
     }
     const deltaX = event.clientX - resizeStart.startX
     const nextWidth = clampSidebarWidth(resizeStart.startWidth + deltaX)
-    setSidebarWidth(nextWidth)
+    scheduleSidebarResizeWidth(nextWidth)
   }
 
   function stopSidebarResize(event: PointerEvent<HTMLButtonElement>) {
     if (resizeStartRef.current === null) return
+    flushSidebarResizeFrame()
     resizeStartRef.current = null
     setIsResizingSidebar(false)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -196,9 +243,7 @@ export function AppLayout() {
     }
   }
 
-  function handleSidebarResizeKeyDown(
-    event: KeyboardEvent<HTMLButtonElement>,
-  ) {
+  function handleSidebarResizeKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
       return
     }
@@ -225,6 +270,7 @@ export function AppLayout() {
             onCreateSession={() => void handleCreateSession()}
             onDeleteSession={(id) => void handleDeleteSession(id)}
             onOpenSettings={() => updateSettingsQuery(true)}
+            onRenameSession={handleRenameSession}
             onSelectSession={handleSelectSession}
             providers={providers}
             sessions={sessions}
@@ -232,7 +278,7 @@ export function AppLayout() {
         </div>
 
         <section
-          className="min-h-0 select-none overflow-hidden rounded-l-xl border border-border/70 bg-background/85 py-1"
+          className="min-h-0 select-none overflow-hidden rounded-l-xl bg-background/85"
           key={location.pathname}
         >
           <Outlet />
@@ -242,10 +288,10 @@ export function AppLayout() {
           aria-label="调整侧边栏宽度"
           aria-orientation="vertical"
           className={cn(
-            "group absolute top-1/2 z-20 flex h-10 w-4 -translate-x-1/2 -translate-y-1/2 cursor-col-resize items-center justify-center rounded-full border border-border/70 bg-background/85 text-muted-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+            "group absolute top-1/2 z-20 flex h-10 w-4 -translate-x-1/2 -translate-y-1/2 cursor-col-resize items-center justify-center rounded-full bg-background/85 text-muted-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
             isResizingSidebar
               ? "border-foreground/25 bg-accent/50 text-foreground"
-              : "hover:border-border hover:bg-card hover:text-foreground",
+              : "hover:bg-card hover:text-foreground",
           )}
           onKeyDown={handleSidebarResizeKeyDown}
           onPointerCancel={stopSidebarResize}
