@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
@@ -61,11 +60,6 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
     maxInputTokens: '32768',
     compactRatio: '0.7',
     keepRecent: '8',
-    heartbeatEnabled: false,
-    heartbeatEvery: '30m',
-    heartbeatTarget: 'main',
-    activeStart: '',
-    activeEnd: '',
   })
 
   const [files, setFiles] = useState<WorkspaceFileInfo[]>([])
@@ -82,11 +76,6 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
       maxInputTokens: String(next.max_input_tokens),
       compactRatio: String(next.compact_ratio),
       keepRecent: String(next.keep_recent),
-      heartbeatEnabled: next.heartbeat.enabled,
-      heartbeatEvery: next.heartbeat.every,
-      heartbeatTarget: next.heartbeat.target,
-      activeStart: next.heartbeat.active_hours?.start ?? '',
-      activeEnd: next.heartbeat.active_hours?.end ?? '',
     })
   }, [])
 
@@ -182,18 +171,6 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
         ),
         compact_ratio: clampNumber(form.compactRatio, config.compact_ratio, 0.1, 0.95),
         keep_recent: clampNumber(form.keepRecent, config.keep_recent, 1, 128),
-        heartbeat: {
-          enabled: form.heartbeatEnabled,
-          every: form.heartbeatEvery.trim() || '30m',
-          target: form.heartbeatTarget.trim() || 'main',
-          active_hours:
-            form.activeStart.trim() && form.activeEnd.trim()
-              ? {
-                  start: form.activeStart.trim(),
-                  end: form.activeEnd.trim(),
-                }
-              : null,
-        },
       })
       syncForm(payload)
       toastSuccess('Agent 配置已保存。')
@@ -249,7 +226,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
       <Card className='border border-border/70 bg-background/80'>
         <CardHeader>
           <CardTitle>Agent 配置</CardTitle>
-          <CardDescription>调整 steps、上下文压缩阈值和 heartbeat 定时执行参数。</CardDescription>
+          <CardDescription>调整 steps 与上下文压缩阈值。</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
           <div className='grid grid-cols-2 gap-3'>
@@ -299,71 +276,6 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
             </div>
           </div>
 
-          <div className='grid grid-cols-2 gap-3'>
-            <div className='col-span-2 flex items-center justify-between rounded-xl border border-border/70 bg-card/60 px-3 py-2'>
-              <div>
-                <p className='text-sm font-medium'>heartbeat.enabled</p>
-                <p className='text-xs text-muted-foreground'>开启后台周期执行</p>
-              </div>
-              <Switch
-                checked={form.heartbeatEnabled}
-                onCheckedChange={(checked) =>
-                  setForm((prev) => ({ ...prev, heartbeatEnabled: checked }))
-                }
-              />
-            </div>
-            <div className='space-y-1.5'>
-              <Label htmlFor='agent-heartbeat-every'>heartbeat.every</Label>
-              <Input
-                id='agent-heartbeat-every'
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    heartbeatEvery: event.target.value,
-                  }))
-                }
-                placeholder='30m'
-                value={form.heartbeatEvery}
-              />
-            </div>
-            <div className='space-y-1.5'>
-              <Label htmlFor='agent-heartbeat-target'>heartbeat.target</Label>
-              <Input
-                id='agent-heartbeat-target'
-                onChange={(event) =>
-                  setForm((prev) => ({
-                    ...prev,
-                    heartbeatTarget: event.target.value,
-                  }))
-                }
-                placeholder='main'
-                value={form.heartbeatTarget}
-              />
-            </div>
-            <div className='space-y-1.5'>
-              <Label htmlFor='agent-active-start'>active start (HH:MM)</Label>
-              <Input
-                id='agent-active-start'
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, activeStart: event.target.value }))
-                }
-                placeholder='08:00'
-                value={form.activeStart}
-              />
-            </div>
-            <div className='space-y-1.5'>
-              <Label htmlFor='agent-active-end'>active end (HH:MM)</Label>
-              <Input
-                id='agent-active-end'
-                onChange={(event) =>
-                  setForm((prev) => ({ ...prev, activeEnd: event.target.value }))
-                }
-                placeholder='22:00'
-                value={form.activeEnd}
-              />
-            </div>
-          </div>
-
           <div className='flex flex-wrap gap-2'>
             <Button
               disabled={savingConfig}
@@ -389,7 +301,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
       <CardHeader>
         <CardTitle>记忆文件</CardTitle>
         <CardDescription>
-          直接编辑 `PROFILE.md / MEMORY.md / memory/*.md / HEARTBEAT.md` 等工作区文件。
+          直接编辑 `PROFILE.md / MEMORY.md / memory/*.md` 等工作区文件。
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-3'>

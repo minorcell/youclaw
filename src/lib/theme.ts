@@ -1,4 +1,15 @@
-import type { CustomThemePalette, ThemeMode } from '@/store/settings-store'
+import type { CustomThemePalette, ThemeFontSize, ThemeMode } from '@/store/settings-store'
+
+const FONT_SIZE_CSS_VALUE: Record<ThemeFontSize, string> = {
+  small: '15px',
+  medium: '16px',
+  large: '17px',
+}
+
+const SANS_FONT_STACK =
+  "'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
+const SERIF_FONT_STACK =
+  "'Noto Serif CJK SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'Times New Roman', serif"
 
 const CUSTOM_THEME_VARS = [
   '--background',
@@ -89,8 +100,20 @@ function clearCustomTheme() {
   }
 }
 
-export function applyTheme(mode: ThemeMode, customTheme: CustomThemePalette) {
+function applyTypography(fontSize: ThemeFontSize, useSerif: boolean) {
   const root = document.documentElement
+  root.style.setProperty('--app-font-size', FONT_SIZE_CSS_VALUE[fontSize])
+  root.style.setProperty('--app-font-family', useSerif ? SERIF_FONT_STACK : SANS_FONT_STACK)
+}
+
+export function applyTheme(
+  mode: ThemeMode,
+  customTheme: CustomThemePalette,
+  fontSize: ThemeFontSize,
+  useSerif: boolean,
+) {
+  const root = document.documentElement
+  applyTypography(fontSize, useSerif)
   clearCustomTheme()
   root.classList.remove('dark')
 

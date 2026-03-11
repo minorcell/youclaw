@@ -3,14 +3,24 @@ import { MoonStar, Palette, Sun, type LucideIcon } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { type ThemeMode, type ThemePresetId, themePresets } from '@/store/settings-store'
+import { Switch } from '@/components/ui/switch'
+import {
+  type ThemeFontSize,
+  type ThemeMode,
+  type ThemePresetId,
+  themePresets,
+} from '@/store/settings-store'
 import { cn } from '@/lib/utils'
 
 interface ThemeSettingsSectionProps {
   mode: ThemeMode
   preset: ThemePresetId
+  fontSize: ThemeFontSize
+  useSerif: boolean
   onModeChange: (value: string | null) => void
   onPresetChange: (preset: ThemePresetId) => void
+  onFontSizeChange: (fontSize: ThemeFontSize) => void
+  onUseSerifChange: (useSerif: boolean) => void
 }
 
 interface ModeOption {
@@ -18,6 +28,12 @@ interface ModeOption {
   label: string
   description: string
   icon: LucideIcon
+}
+
+interface FontSizeOption {
+  id: ThemeFontSize
+  label: string
+  sliderValue: number
 }
 
 const modeOptions: ModeOption[] = [
@@ -41,12 +57,27 @@ const modeOptions: ModeOption[] = [
   },
 ]
 
+const fontSizeOptions: FontSizeOption[] = [
+  { id: 'small', label: '小', sliderValue: 0 },
+  { id: 'medium', label: '中', sliderValue: 1 },
+  { id: 'large', label: '大', sliderValue: 2 },
+]
+
+const FONT_SIZE_MIN = fontSizeOptions[0].sliderValue
+const FONT_SIZE_MAX = fontSizeOptions[fontSizeOptions.length - 1].sliderValue
+
 export function ThemeSettingsSection({
   mode,
   preset,
+  fontSize,
+  useSerif,
   onModeChange,
   onPresetChange,
+  onFontSizeChange,
+  onUseSerifChange,
 }: ThemeSettingsSectionProps) {
+  const currentFontSize = fontSizeOptions.find((option) => option.id === fontSize) ?? fontSizeOptions[1]
+
   return (
     <Card className='border border-border/70 bg-card/80 py-0 shadow-none'>
       <CardHeader className='py-4'>
@@ -94,6 +125,58 @@ export function ThemeSettingsSection({
             )
           })}
         </RadioGroup>
+
+        <div className='space-y-3 rounded-xl border border-border/70 bg-background/85 p-3'>
+          <div className='flex items-center justify-between gap-3'>
+            <div>
+              <p className='text-sm font-medium'>字体大小</p>
+              <p className='text-xs text-muted-foreground'>通过滑块切换全局字号等级。</p>
+            </div>
+            <span className='rounded-full border border-border/70 bg-card px-2 py-0.5 text-xs'>
+              {currentFontSize.label}
+            </span>
+          </div>
+          <input
+            aria-label='字体大小'
+            className='h-2 w-full cursor-pointer appearance-none rounded-full bg-muted accent-primary'
+            max={FONT_SIZE_MAX}
+            min={FONT_SIZE_MIN}
+            onChange={(event) => {
+              const sliderValue = Number.parseInt(event.target.value, 10)
+              const next = fontSizeOptions.find((option) => option.sliderValue === sliderValue)
+              if (next) {
+                onFontSizeChange(next.id)
+              }
+            }}
+            step={1}
+            type='range'
+            value={currentFontSize.sliderValue}
+          />
+          <div className='grid grid-cols-3 text-xs text-muted-foreground'>
+            {fontSizeOptions.map((option) => (
+              <span
+                className={cn(
+                  option.sliderValue === FONT_SIZE_MIN
+                    ? 'text-left'
+                    : option.sliderValue === FONT_SIZE_MAX
+                      ? 'text-right'
+                      : 'text-center',
+                )}
+                key={option.id}
+              >
+                {option.label}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className='flex items-center justify-between rounded-xl border border-border/70 bg-background/85 px-3 py-2.5'>
+          <div>
+            <p className='text-sm font-medium'>衬线字体</p>
+            <p className='text-xs text-muted-foreground'>开启后使用 serif 风格作为全局主字体。</p>
+          </div>
+          <Switch checked={useSerif} onCheckedChange={onUseSerifChange} />
+        </div>
       </CardContent>
 
       {mode === 'custom' ? (

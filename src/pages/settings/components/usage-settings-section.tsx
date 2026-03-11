@@ -209,9 +209,9 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsData, setToolsData] = useState<UsageToolStatsPayload | null>(null)
 
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
-  const [detailLoadingRunId, setDetailLoadingRunId] = useState<string | null>(null)
-  const [detailsByRunId, setDetailsByRunId] = useState<Record<string, UsageLogDetailPayload>>({})
+  const [expandedTurnId, setExpandedTurnId] = useState<string | null>(null)
+  const [detailLoadingTurnId, setDetailLoadingTurnId] = useState<string | null>(null)
+  const [detailsByTurnId, setDetailsByTurnId] = useState<Record<string, UsageLogDetailPayload>>({})
 
   const summaryRequestIdRef = useRef(0)
   const logsRequestIdRef = useRef(0)
@@ -303,7 +303,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
       try {
         const payload = await getAppClient().request<UsageLogsPayload>('usage.logs.list', {
           range,
-          model_id: logModelId === 'all' ? null : logModelId,
+          provider_profile_id: logModelId === 'all' ? null : logModelId,
           status: logStatus === 'all' ? null : logStatus,
           detail_logged: detailFilter === 'all' ? null : detailFilter === 'on',
           page: logsPage,
@@ -456,30 +456,30 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
     }
   }
 
-  async function handleToggleRunDetail(runId: string) {
-    if (expandedRunId === runId) {
-      setExpandedRunId(null)
+  async function handleToggleTurnDetail(turnId: string) {
+    if (expandedTurnId === turnId) {
+      setExpandedTurnId(null)
       return
     }
 
-    setExpandedRunId(runId)
-    if (detailsByRunId[runId]) {
+    setExpandedTurnId(turnId)
+    if (detailsByTurnId[turnId]) {
       return
     }
 
-    setDetailLoadingRunId(runId)
+    setDetailLoadingTurnId(turnId)
     try {
       const payload = await getAppClient().request<UsageLogDetailPayload>('usage.logs.detail', {
-        run_id: runId,
+        turn_id: turnId,
       })
-      setDetailsByRunId((current) => ({
+      setDetailsByTurnId((current) => ({
         ...current,
-        [runId]: payload,
+        [turnId]: payload,
       }))
     } catch (error) {
       toastError(errorMessageFromUnknown(error))
     } finally {
-      setDetailLoadingRunId(null)
+      setDetailLoadingTurnId(null)
     }
   }
 
@@ -490,7 +490,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
           <div className='flex flex-wrap items-center justify-between gap-3'>
             <div>
               <CardTitle>使用概览</CardTitle>
-              <CardDescription>按时间范围查看请求与 Token 消耗。</CardDescription>
+              <CardDescription>按时间范围查看 Turn 与 Token 消耗。</CardDescription>
             </div>
             <div className='flex items-center gap-2 rounded-xl border border-border/70 bg-background/80 p-1'>
               {rangeOptions.map((item) => (
@@ -511,8 +511,9 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
 
         <CardContent className='grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4'>
           <SummaryItem
-            label='总请求'
-            value={summaryLoading ? '...' : formatNumber(summary?.total_requests ?? 0)}
+            label='总 Turn'
+            value={summaryLoading ? '...' : formatNumber(summary?.total_turns ?? 0)}
+            hint={`总 Step ${formatNumber(summary?.total_steps ?? 0)}`}
           />
           <SummaryItem
             label='输入 Token'
@@ -527,7 +528,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
           <SummaryItem
             label='总 Token'
             value={summaryLoading ? '...' : formatNumber(summary?.total_tokens ?? 0)}
-            hint={`缓存写入 ${formatNumber(summary?.input_cache_write_tokens ?? 0)}`}
+            hint={`平均步数 ${((summary?.avg_steps_per_turn ?? 0) || 0).toFixed(2)}`}
           />
         </CardContent>
       </Card>
@@ -549,7 +550,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
           >
             <TabsList className='grid w-full grid-cols-4' variant='default'>
               <TabsTrigger value='logs'>
-                <ListFilter className='h-4 w-4' /> 请求日志
+                <ListFilter className='h-4 w-4' /> Turn 日志
               </TabsTrigger>
               <TabsTrigger value='providers'>
                 <Database className='h-4 w-4' /> 供应商统计
@@ -626,16 +627,16 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
               <div className='space-y-2'>
                 {logsLoading ? (
                   <div className='flex items-center gap-2 rounded-xl border border-border/70 px-3 py-5 text-sm text-muted-foreground'>
-                    <Loader2 className='h-4 w-4 animate-spin' /> 加载请求日志中...
+                    <Loader2 className='h-4 w-4 animate-spin' /> 加载 Turn 日志中...
                   </div>
                 ) : logsData?.items.length ? (
                   logsData.items.map((item) => {
-                    const isExpanded = expandedRunId === item.run_id
-                    const detailPayload = detailsByRunId[item.run_id]
+                    const isExpanded = expandedTurnId === item.turn_id
+                    const detailPayload = detailsByTurnId[item.turn_id]
                     return (
                       <div
                         className='rounded-xl border border-border/70 bg-background/75 p-3'
-                        key={item.run_id}
+                        key={item.turn_id}
                       >
                         <div className='flex flex-wrap items-center gap-2'>
                           <Badge className={cn('border', statusBadgeClass(item.status))}>
@@ -653,12 +654,13 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                         </div>
 
                         <p className='mt-2 line-clamp-2 text-sm text-foreground/90'>
-                          {item.user_message || '(空请求)'}
+                          {item.user_message || '(空 Turn)'}
                         </p>
 
                         <div className='mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
                           <span>{formatDateTime(item.started_at)}</span>
                           <span>耗时: {formatDuration(item.duration_ms)}</span>
+                          <span>steps: {formatNumber(item.step_count)}</span>
                           <span>
                             tokens: {formatNumber(item.input_tokens)}/
                             {formatNumber(item.output_tokens)}/{formatNumber(item.total_tokens)}
@@ -668,13 +670,13 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
 
                         <div className='mt-3'>
                           <Button
-                            disabled={detailLoadingRunId === item.run_id}
-                            onClick={() => void handleToggleRunDetail(item.run_id)}
+                            disabled={detailLoadingTurnId === item.turn_id}
+                            onClick={() => void handleToggleTurnDetail(item.turn_id)}
                             size='sm'
                             type='button'
                             variant='outline'
                           >
-                            {detailLoadingRunId === item.run_id ? (
+                            {detailLoadingTurnId === item.turn_id ? (
                               <Loader2 className='mr-1 h-4 w-4 animate-spin' />
                             ) : (
                               <Clock3 className='mr-1 h-4 w-4' />
@@ -721,7 +723,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                               ))
                             ) : (
                               <p className='px-1 py-2 text-xs text-muted-foreground'>
-                                当前 run 没有可展示的工具详情。
+                                当前 Turn 没有可展示的工具详情。
                               </p>
                             )}
                           </div>
@@ -731,7 +733,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                   })
                 ) : (
                   <div className='rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground'>
-                    当前筛选下暂无请求日志。
+                    当前筛选下暂无 Turn 日志。
                   </div>
                 )}
               </div>
@@ -763,7 +765,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                         {item.provider_name ?? '未识别服务商'}
                       </p>
                       <p className='text-xs text-muted-foreground'>
-                        请求 {formatNumber(item.request_count)}
+                        Turn {formatNumber(item.turn_count)}
                       </p>
                       <p className='text-xs text-muted-foreground'>
                         成功 {formatNumber(item.completed_count)}
@@ -815,7 +817,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                         </p>
                       </div>
                       <p className='text-xs text-muted-foreground'>
-                        请求 {formatNumber(item.request_count)}
+                        Turn {formatNumber(item.turn_count)}
                       </p>
                       <p className='text-xs text-muted-foreground'>
                         成功 {formatNumber(item.completed_count)}

@@ -43,6 +43,8 @@ export default function App() {
   const setWsStatus = useAppStore((state) => state.setWsStatus)
   const themeMode = useSettingsStore((state) => state.mode)
   const customTheme = useSettingsStore((state) => state.custom)
+  const themeFontSize = useSettingsStore((state) => state.fontSize)
+  const useSerifFont = useSettingsStore((state) => state.useSerif)
 
   useEffect(() => {
     let disposed = false
@@ -129,8 +131,8 @@ export default function App() {
   }, [setEndpoint, setWsStatus])
 
   useEffect(() => {
-    applyTheme(themeMode, customTheme)
-  }, [themeMode, customTheme])
+    applyTheme(themeMode, customTheme, themeFontSize, useSerifFont)
+  }, [themeMode, customTheme, themeFontSize, useSerifFont])
 
   return (
     <ToastProvider>

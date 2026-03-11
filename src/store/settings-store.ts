@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 
 export type ThemeMode = 'white' | 'black' | 'custom'
 export type ThemePresetId = 'grass-green' | 'desert-yellow'
+export type ThemeFontSize = 'small' | 'medium' | 'large'
 export type SettingsSection = 'general' | 'memory' | 'providers' | 'usage'
 export type SelectedProviderId = string | 'new'
 
@@ -82,10 +83,23 @@ function normalizePresetId(value: unknown): ThemePresetId {
   return defaultThemePresetId
 }
 
+function isThemeFontSize(value: unknown): value is ThemeFontSize {
+  return value === 'small' || value === 'medium' || value === 'large'
+}
+
+function normalizeFontSize(value: unknown): ThemeFontSize {
+  if (isThemeFontSize(value)) {
+    return value
+  }
+  return 'medium'
+}
+
 interface PersistedSettingsThemeState {
   mode: ThemeMode
   preset: ThemePresetId
   custom: CustomThemePalette
+  fontSize: ThemeFontSize
+  useSerif: boolean
 }
 
 interface SettingsStoreState extends PersistedSettingsThemeState {
@@ -93,6 +107,8 @@ interface SettingsStoreState extends PersistedSettingsThemeState {
   selectedProviderId: SelectedProviderId
   setMode: (mode: ThemeMode) => void
   setPreset: (preset: ThemePresetId) => void
+  setFontSize: (fontSize: ThemeFontSize) => void
+  setUseSerif: (useSerif: boolean) => void
   resetCustomTheme: () => void
   setSettingsSection: (section: SettingsSection) => void
   setSelectedProviderId: (providerId: SelectedProviderId) => void
@@ -110,6 +126,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
       mode: 'white',
       preset: defaultThemePresetId,
       custom: getPresetPalette(defaultThemePresetId),
+      fontSize: 'medium',
+      useSerif: false,
       ...defaultSettingsUiState,
       setMode: (mode) => set({ mode }),
       setPreset: (preset) =>
@@ -117,6 +135,8 @@ export const useSettingsStore = create<SettingsStoreState>()(
           preset,
           custom: getPresetPalette(preset),
         }),
+      setFontSize: (fontSize) => set({ fontSize }),
+      setUseSerif: (useSerif) => set({ useSerif }),
       resetCustomTheme: () =>
         set({
           preset: defaultThemePresetId,
@@ -127,22 +147,28 @@ export const useSettingsStore = create<SettingsStoreState>()(
       resetSettingsUiState: () => set(defaultSettingsUiState),
     }),
     {
-      name: 'bgtclaw.theme',
-      version: 4,
+      name: 'youclaw.theme',
+      version: 5,
       partialize: (state) => ({
         mode: state.mode,
         preset: state.preset,
         custom: state.custom,
+        fontSize: state.fontSize,
+        useSerif: state.useSerif,
       }),
       migrate: (persistedState, _version) => {
         const state = (persistedState ?? {}) as Partial<
-          PersistedSettingsThemeState & { preset?: string }
+          PersistedSettingsThemeState & { preset?: string; fontSize?: string }
         >
         const nextPreset = normalizePresetId(state.preset)
+        const nextFontSize = normalizeFontSize(state.fontSize)
+        const nextUseSerif = typeof state.useSerif === 'boolean' ? state.useSerif : false
         return {
           mode: state.mode ?? 'white',
           preset: nextPreset,
           custom: getPresetPalette(nextPreset),
+          fontSize: nextFontSize,
+          useSerif: nextUseSerif,
           ...defaultSettingsUiState,
         }
       },

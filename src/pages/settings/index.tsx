@@ -43,7 +43,7 @@ const sectionMeta: Record<SettingsSection, SettingsSectionMeta> = {
   },
   memory: {
     label: '记忆文件',
-    description: '编辑 MEMORY/PROFILE/HEARTBEAT 与 memory/*.md',
+    description: '编辑 MEMORY/PROFILE 与 memory/*.md',
     icon: Bot,
   },
   providers: {
@@ -53,7 +53,7 @@ const sectionMeta: Record<SettingsSection, SettingsSectionMeta> = {
   },
   usage: {
     label: '使用统计',
-    description: '查看请求、Token 消耗与工具调用统计',
+    description: '查看 Turn、Token 消耗与工具调用统计',
     icon: ChartColumnIncreasing,
   },
 }
@@ -116,8 +116,12 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
 
   const themeMode = useSettingsStore((state) => state.mode)
   const themePreset = useSettingsStore((state) => state.preset)
+  const themeFontSize = useSettingsStore((state) => state.fontSize)
+  const themeUseSerif = useSettingsStore((state) => state.useSerif)
   const setThemeMode = useSettingsStore((state) => state.setMode)
   const setThemePreset = useSettingsStore((state) => state.setPreset)
+  const setThemeFontSize = useSettingsStore((state) => state.setFontSize)
+  const setThemeUseSerif = useSettingsStore((state) => state.setUseSerif)
 
   useEffect(() => {
     if (!open) {
@@ -357,10 +361,14 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                   {section === 'general' ? (
                     <div className='space-y-4'>
                       <ThemeSettingsSection
+                        fontSize={themeFontSize}
                         mode={themeMode}
+                        onFontSizeChange={setThemeFontSize}
                         onModeChange={handleThemeModeChange}
                         onPresetChange={setThemePreset}
+                        onUseSerifChange={setThemeUseSerif}
                         preset={themePreset}
+                        useSerif={themeUseSerif}
                       />
                       <AgentSettingsSection mode='config' />
                     </div>
