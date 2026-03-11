@@ -311,6 +311,7 @@ export interface RunViewState {
   run: ChatRun
   sessionId: string
   timeline: TimelineItem[]
+  liveStepsById: Record<string, Extract<TimelineItem, { kind: "step" }>>
   usageTotal?: Usage
   error?: string
 }

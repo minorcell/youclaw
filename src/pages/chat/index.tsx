@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Navigate, useParams } from "react-router-dom"
+import { useShallow } from "zustand/react/shallow"
 
 import { ChatComposer } from "@/pages/chat/components/chat-composer"
 import { MessageThread } from "@/pages/chat/components/message-thread"
@@ -8,20 +9,39 @@ import { Card } from "@/components/ui/card"
 import { getAppClient } from "@/lib/app-client"
 import { partsToOutputText } from "@/lib/parts"
 import { flattenProviderProfiles } from "@/lib/provider-profiles"
-import type { ProviderProfile, RunViewState, TimelineItem } from "@/lib/types"
+import type { ChatMessage, ProviderProfile, TimelineItem } from "@/lib/types"
 import { useAppStore } from "@/store/app-store"
+
+const EMPTY_MESSAGES: ChatMessage[] = []
+const WHITESPACE_REGEX = /\s+/g
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(WHITESPACE_REGEX, " ").trim()
+}
 
 export function ChatPage() {
   const params = useParams<{ sessionId: string }>()
   const sessionId = params.sessionId ?? null
 
-  const providerAccounts = useAppStore((state) => state.providerAccounts)
-  const sessions = useAppStore((state) => state.sessions)
-  const messagesBySession = useAppStore((state) => state.messagesBySession)
-  const runsById = useAppStore((state) => state.runsById)
-  const approvalsById = useAppStore((state) => state.approvalsById)
-  const setActiveSession = useAppStore((state) => state.setActiveSession)
-  const clearError = useAppStore((state) => state.clearError)
+  const { providerAccounts, sessions, approvalsById, setActiveSession, clearError } =
+    useAppStore(
+      useShallow((state) => ({
+        providerAccounts: state.providerAccounts,
+        sessions: state.sessions,
+        approvalsById: state.approvalsById,
+        setActiveSession: state.setActiveSession,
+        clearError: state.clearError,
+      })),
+    )
+  const messages = useAppStore((state) =>
+    sessionId ? (state.messagesBySession[sessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
+  )
+  const activeRun = useAppStore((state) => {
+    if (!sessionId) return null
+    const activeRunId = state.activeRunIdBySession[sessionId]
+    if (!activeRunId) return null
+    return state.runsById[activeRunId] ?? null
+  })
   const providers = useMemo(
     () => flattenProviderProfiles(providerAccounts),
     [providerAccounts],
@@ -48,21 +68,9 @@ export function ChatPage() {
     )
   }, [activeSession, providers])
 
-  const messages = sessionId ? (messagesBySession[sessionId] ?? []) : []
-  const activeRun = useMemo<RunViewState | null>(() => {
-    if (!sessionId) return null
-    return (
-      Object.values(runsById)
-        .filter((run) => run.sessionId === sessionId)
-        .sort((left, right) =>
-          right.run.created_at.localeCompare(left.run.created_at),
-        )[0] ?? null
-    )
-  }, [runsById, sessionId])
-
   const runSteps = useMemo(() => {
     if (!activeRun) return []
-    return activeRun.timeline
+    const completedSteps = activeRun.timeline
       .filter(
         (item): item is Extract<TimelineItem, { kind: "step" }> =>
           item.kind === "step",
@@ -73,31 +81,50 @@ export function ChatPage() {
         outputText: item.outputText,
         reasoningText: item.reasoningText,
       }))
-      .sort((left, right) => left.step - right.step)
+    const liveSteps = Object.values(activeRun.liveStepsById).map((item) => ({
+      step: item.step,
+      status: item.status,
+      outputText: item.outputText,
+      reasoningText: item.reasoningText,
+    }))
+    return [...completedSteps, ...liveSteps].sort(
+      (left, right) => left.step - right.step,
+    )
   }, [activeRun])
 
-  const renderMessages = useMemo(() => {
-    if (!activeRun || runSteps.length === 0) return messages
+  const activeRunId = activeRun?.run.id ?? null
+  const hasRunSteps = runSteps.length > 0
+  const normalizedStepText = useMemo(() => {
+    if (!hasRunSteps) return ""
+    return normalizeWhitespace(runSteps[runSteps.length - 1].outputText)
+  }, [hasRunSteps, runSteps])
 
-    const lastStep = runSteps[runSteps.length - 1]
-    const normalizedStepText = lastStep.outputText.replace(/\s+/g, " ").trim()
+  const normalizedMessageTextById = useMemo(() => {
+    const normalizedById = new Map<string, string>()
+    for (const message of messages) {
+      normalizedById.set(
+        message.id,
+        normalizeWhitespace(partsToOutputText(message.parts_json)),
+      )
+    }
+    return normalizedById
+  }, [messages])
+
+  const renderMessages = useMemo(() => {
+    if (!activeRunId || !hasRunSteps) return messages
 
     return messages.filter((message) => {
-      if (message.role !== "assistant" || message.run_id !== activeRun.run.id) {
+      if (message.role !== "assistant" || message.run_id !== activeRunId) {
         return true
       }
-
-      const normalizedMessageText = partsToOutputText(message.parts_json)
-        .replace(/\s+/g, " ")
-        .trim()
 
       if (!normalizedStepText) {
         return false
       }
 
-      return normalizedMessageText !== normalizedStepText
+      return normalizedMessageTextById.get(message.id) !== normalizedStepText
     })
-  }, [activeRun, messages, runSteps])
+  }, [activeRunId, hasRunSteps, messages, normalizedMessageTextById, normalizedStepText])
 
   const pendingApprovals = useMemo(() => {
     if (!sessionId) return []
@@ -147,12 +174,13 @@ export function ChatPage() {
       container.scrollTo({ top: container.scrollHeight })
     }
     lastMessageCountRef.current = currentMessageCount
-  }, [currentMessageCount, userScrolledUp, messages.length])
+  }, [currentMessageCount, userScrolledUp])
 
   // 当 runSteps 变化时（流式输出），如果用户没有上滑，自动滚动到底部
-  const currentRunStepsText = runSteps
-    .map((s) => `${s.reasoningText}\n${s.outputText}`)
-    .join("")
+  const currentRunStepsText = useMemo(
+    () => runSteps.map((step) => `${step.reasoningText}\n${step.outputText}`).join(""),
+    [runSteps],
+  )
   useEffect(() => {
     const container = scrollContainerRef.current
     if (!container) return
@@ -163,7 +191,7 @@ export function ChatPage() {
       })
     }
     lastRunStepsTextRef.current = currentRunStepsText
-  }, [currentRunStepsText, userScrolledUp, runSteps])
+  }, [currentRunStepsText, userScrolledUp])
 
   if (providers.length === 0) {
     return <Navigate replace to="/welcome/provider" />

@@ -11,6 +11,10 @@ interface TimelinePanelProps {
 }
 
 export function TimelinePanel({ run, onResolveApproval }: TimelinePanelProps) {
+  const timelineItems = run
+    ? [...run.timeline, ...Object.values(run.liveStepsById)]
+    : []
+
   return (
     <Card className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-border/70 p-5">
@@ -23,7 +27,7 @@ export function TimelinePanel({ run, onResolveApproval }: TimelinePanelProps) {
       </div>
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {run ? (
-          run.timeline.map((item) => (
+          timelineItems.map((item) => (
             <Card className="p-4" key={item.id}>
               {item.kind === "step" ? (
                 <div className="space-y-3">

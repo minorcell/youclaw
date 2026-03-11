@@ -35,6 +35,7 @@ interface AppStoreState {
   messagesBySession: Record<string, ChatMessage[]>
   approvalsById: Record<string, ToolApproval>
   runsById: Record<string, RunViewState>
+  activeRunIdBySession: Record<string, string>
   activeSessionId: string | null
   lastOpenedSessionId: string | null
   lastError: string | null
@@ -97,9 +98,23 @@ function getOrCreateRunView(state: AppStoreState, run: ChatRun): RunViewState {
       run,
       sessionId: run.session_id,
       timeline: [],
+      liveStepsById: {},
       usageTotal: undefined,
       error: run.error_message ?? undefined,
     }
+  )
+}
+
+function buildActiveRunIdBySession(runs: ChatRun[]): Record<string, string> {
+  const activeRunBySession: Record<string, ChatRun> = {}
+  for (const run of runs) {
+    const current = activeRunBySession[run.session_id]
+    if (!current || run.created_at.localeCompare(current.created_at) > 0) {
+      activeRunBySession[run.session_id] = run
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(activeRunBySession).map(([sessionId, run]) => [sessionId, run.id]),
   )
 }
 
@@ -112,6 +127,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
   messagesBySession: {},
   approvalsById: {},
   runsById: {},
+  activeRunIdBySession: {},
   activeSessionId: null,
   lastOpenedSessionId: null,
   lastError: null,
@@ -148,10 +164,12 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 run,
                 sessionId: run.session_id,
                 timeline: [],
+                liveStepsById: {},
                 error: run.error_message ?? undefined,
               },
             ]),
           )
+          next.activeRunIdBySession = buildActiveRunIdBySession(payload.runs)
           next.lastOpenedSessionId = payload.last_opened_session_id
           next.activeSessionId =
             state.activeSessionId ?? payload.last_opened_session_id ?? payload.sessions[0]?.id ?? null
@@ -202,8 +220,13 @@ export const useAppStore = create<AppStoreState>((set) => ({
               run: payload.run,
               sessionId: payload.session_id,
               timeline: [],
+              liveStepsById: {},
               error: undefined,
             },
+          }
+          next.activeRunIdBySession = {
+            ...state.activeRunIdBySession,
+            [payload.session_id]: payload.run.id,
           }
           return next as AppStoreState
         }
@@ -212,10 +235,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           const current = state.runsById[payload.run_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
-          const existingStep = current.timeline.find(
-            (item): item is Extract<TimelineItem, { kind: "step" }> =>
-              item.kind === "step" && item.id === stepId,
-          )
+          const existingStep = current.liveStepsById[stepId]
           const nextStep: Extract<TimelineItem, { kind: "step" }> = existingStep
             ? {
                 ...existingStep,
@@ -233,7 +253,10 @@ export const useAppStore = create<AppStoreState>((set) => ({
             ...state.runsById,
             [payload.run_id]: {
               ...current,
-              timeline: upsertTimelineItem(current.timeline, nextStep),
+              liveStepsById: {
+                ...current.liveStepsById,
+                [stepId]: nextStep,
+              },
             },
           }
           return next as AppStoreState
@@ -243,10 +266,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           const current = state.runsById[payload.run_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
-          const existingStep = current.timeline.find(
-            (item): item is Extract<TimelineItem, { kind: "step" }> =>
-              item.kind === "step" && item.id === stepId,
-          )
+          const existingStep = current.liveStepsById[stepId]
           const nextStep: Extract<TimelineItem, { kind: "step" }> = existingStep
             ? {
                 ...existingStep,
@@ -264,7 +284,10 @@ export const useAppStore = create<AppStoreState>((set) => ({
             ...state.runsById,
             [payload.run_id]: {
               ...current,
-              timeline: upsertTimelineItem(current.timeline, nextStep),
+              liveStepsById: {
+                ...current.liveStepsById,
+                [stepId]: nextStep,
+              },
             },
           }
           return next as AppStoreState
@@ -273,18 +296,23 @@ export const useAppStore = create<AppStoreState>((set) => ({
           const payload = envelope.payload as StepStartedPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
+          const stepId = `step-${payload.step}`
+          const existingStep = current.liveStepsById[stepId]
           next.runsById = {
             ...state.runsById,
             [payload.run_id]: {
               ...current,
-              timeline: upsertTimelineItem(current.timeline, {
-                id: `step-${payload.step}`,
-                kind: "step",
-                step: payload.step,
-                status: "started",
-                outputText: "",
-                reasoningText: "",
-              }),
+              liveStepsById: {
+                ...current.liveStepsById,
+                [stepId]: {
+                  id: stepId,
+                  kind: "step",
+                  step: payload.step,
+                  status: "started",
+                  outputText: existingStep?.outputText ?? "",
+                  reasoningText: existingStep?.reasoningText ?? "",
+                },
+              },
             },
           }
           return next as AppStoreState
@@ -293,12 +321,15 @@ export const useAppStore = create<AppStoreState>((set) => ({
           const payload = envelope.payload as StepFinishedPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
+          const stepId = `step-${payload.step.step}`
+          const liveStepsById = { ...current.liveStepsById }
+          delete liveStepsById[stepId]
           next.runsById = {
             ...state.runsById,
             [payload.run_id]: {
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
-                id: `step-${payload.step.step}`,
+                id: stepId,
                 kind: "step",
                 step: payload.step.step,
                 status: "finished",
@@ -306,6 +337,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 reasoningText: payload.step.reasoning_text ?? "",
                 usage: payload.step.usage,
               }),
+              liveStepsById,
             },
           }
           return next as AppStoreState
@@ -372,6 +404,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
             [payload.run.id]: {
               ...current,
               run: payload.run,
+              liveStepsById: {},
               usageTotal: payload.usage_total,
               error: undefined,
             },
@@ -394,6 +427,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 status: "failed",
                 error_message: payload.error,
               },
+              liveStepsById: {},
               error: payload.error,
             },
           }
@@ -413,6 +447,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 status: "cancelled",
                 error_message: "Run cancelled",
               },
+              liveStepsById: {},
               error: "Run cancelled",
             },
           }

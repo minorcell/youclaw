@@ -44,6 +44,8 @@ export function AppLayout() {
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
   )
+  const resizeAnimationFrameRef = useRef<number | null>(null)
+  const pendingSidebarWidthRef = useRef<number | null>(null)
 
   const sessionIdFromRoute = params.sessionId ?? null
   const isSettingsOpen = searchParams.get("settings") === "1"
@@ -83,6 +85,38 @@ export function AppLayout() {
     return clampValue(width, SIDEBAR_MIN_WIDTH, getSidebarMaxWidth())
   }
 
+  function setSidebarWidthIfNeeded(nextWidth: number) {
+    setSidebarWidth((currentWidth) =>
+      currentWidth === nextWidth ? currentWidth : nextWidth,
+    )
+  }
+
+  function flushSidebarResizeFrame() {
+    if (resizeAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(resizeAnimationFrameRef.current)
+      resizeAnimationFrameRef.current = null
+    }
+    if (pendingSidebarWidthRef.current !== null) {
+      setSidebarWidthIfNeeded(pendingSidebarWidthRef.current)
+      pendingSidebarWidthRef.current = null
+    }
+  }
+
+  function scheduleSidebarResizeWidth(nextWidth: number) {
+    pendingSidebarWidthRef.current = nextWidth
+    if (resizeAnimationFrameRef.current !== null) {
+      return
+    }
+    resizeAnimationFrameRef.current = requestAnimationFrame(() => {
+      resizeAnimationFrameRef.current = null
+      if (pendingSidebarWidthRef.current === null) {
+        return
+      }
+      setSidebarWidthIfNeeded(pendingSidebarWidthRef.current)
+      pendingSidebarWidthRef.current = null
+    })
+  }
+
   useEffect(() => {
     function syncSidebarWidthToViewport() {
       setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth))
@@ -92,6 +126,12 @@ export function AppLayout() {
     window.addEventListener("resize", syncSidebarWidthToViewport)
     return () => {
       window.removeEventListener("resize", syncSidebarWidthToViewport)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      flushSidebarResizeFrame()
     }
   }, [])
 
@@ -184,11 +224,12 @@ export function AppLayout() {
     }
     const deltaX = event.clientX - resizeStart.startX
     const nextWidth = clampSidebarWidth(resizeStart.startWidth + deltaX)
-    setSidebarWidth(nextWidth)
+    scheduleSidebarResizeWidth(nextWidth)
   }
 
   function stopSidebarResize(event: PointerEvent<HTMLButtonElement>) {
     if (resizeStartRef.current === null) return
+    flushSidebarResizeFrame()
     resizeStartRef.current = null
     setIsResizingSidebar(false)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
