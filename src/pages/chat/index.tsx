@@ -118,7 +118,10 @@ function buildStepsFromMessages(
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
 
   // Collect all tool results from this turn (from tool-role messages)
-  const allToolResults = new Map<string, { call_id: string; output_json: Record<string, unknown>; is_error: boolean }>()
+  const allToolResults = new Map<
+    string,
+    { call_id: string; output_json: Record<string, unknown>; is_error: boolean }
+  >()
   for (const msg of turnMessages) {
     if (msg.role !== 'tool' && msg.role !== 'assistant') continue
     for (const part of msg.parts_json) {
@@ -146,8 +149,7 @@ function buildStepsFromMessages(
       argsJson: call.args_json,
       result: allToolResults.get(call.call_id),
       isLive: false,
-      approval:
-        Object.values(approvalsById).find((a) => a.call_id === call.call_id) ?? null,
+      approval: Object.values(approvalsById).find((a) => a.call_id === call.call_id) ?? null,
     }))
 
     if (outputText || reasoningText || tools.length > 0) {
@@ -257,8 +259,7 @@ export function ChatPage() {
       const isActive = turn.id === activeTurnId
 
       const hasTimelineData =
-        turnViewState.timeline.length > 0 ||
-        Object.keys(turnViewState.liveStepsById).length > 0
+        turnViewState.timeline.length > 0 || Object.keys(turnViewState.liveStepsById).length > 0
 
       let steps: StepRenderUnit[]
       if (hasTimelineData) {

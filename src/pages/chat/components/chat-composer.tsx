@@ -63,7 +63,9 @@ export function ChatComposer({
             const endedRecently =
               Date.now() - lastCompositionEndAtRef.current < IME_ENTER_GUARD_WINDOW_MS
             const isImeComposing =
-              isComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
+              isComposingRef.current ||
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229
 
             if (isImeComposing || endedRecently) {
               return
@@ -105,7 +107,11 @@ export function ChatComposer({
             size='icon'
             type='button'
           >
-            {isTurnRunning ? <Square className='h-3.5 w-3.5' /> : <SendHorizonal className='h-4 w-4' />}
+            {isTurnRunning ? (
+              <Square className='h-3.5 w-3.5' />
+            ) : (
+              <SendHorizonal className='h-4 w-4' />
+            )}
           </Button>
         </div>
       </div>

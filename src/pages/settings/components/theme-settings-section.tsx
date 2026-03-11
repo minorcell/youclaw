@@ -76,7 +76,8 @@ export function ThemeSettingsSection({
   onFontSizeChange,
   onUseSerifChange,
 }: ThemeSettingsSectionProps) {
-  const currentFontSize = fontSizeOptions.find((option) => option.id === fontSize) ?? fontSizeOptions[1]
+  const currentFontSize =
+    fontSizeOptions.find((option) => option.id === fontSize) ?? fontSizeOptions[1]
 
   return (
     <Card className='border border-border/70 bg-card/80 py-0 shadow-none'>
