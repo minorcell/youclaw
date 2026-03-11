@@ -1,4 +1,5 @@
-import { SendHorizonal } from 'lucide-react'
+import { useRef } from 'react'
+import { SendHorizonal, Square } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -12,12 +13,16 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import type { ProviderProfile } from '@/lib/types'
 
+const IME_ENTER_GUARD_WINDOW_MS = 40
+
 interface ChatComposerProps {
   input: string
   providers: ProviderProfile[]
   selectedProviderId: string | null
   onInputChange: (value: string) => void
   onSend: () => void
+  isTurnRunning: boolean
+  onCancelTurn: () => void
   onBindProvider: (providerProfileId: string | null) => void
 }
 
@@ -27,8 +32,13 @@ export function ChatComposer({
   selectedProviderId,
   onInputChange,
   onSend,
+  isTurnRunning,
+  onCancelTurn,
   onBindProvider,
 }: ChatComposerProps) {
+  const isComposingRef = useRef(false)
+  const lastCompositionEndAtRef = useRef(0)
+
   const selectedProvider = providers.find((p) => p.id === selectedProviderId)
   const selectedModel = selectedProvider
     ? `${selectedProvider.name} / ${selectedProvider.model_name || selectedProvider.model}`
@@ -40,11 +50,28 @@ export function ChatComposer({
         <Textarea
           className='rounded-xs min-h-16 max-h-60 resize-none border-0 bg-transparent p-0 text-[16px] leading-[1.4] shadow-none focus-visible:ring-0 overflow-y-auto dark:bg-transparent'
           onChange={(event) => onInputChange(event.target.value)}
+          onCompositionEnd={() => {
+            isComposingRef.current = false
+            lastCompositionEndAtRef.current = Date.now()
+          }}
+          onCompositionStart={() => {
+            isComposingRef.current = true
+          }}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              onSend()
+            if (event.key !== 'Enter' || event.shiftKey) return
+
+            const endedRecently =
+              Date.now() - lastCompositionEndAtRef.current < IME_ENTER_GUARD_WINDOW_MS
+            const isImeComposing =
+              isComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
+
+            if (isImeComposing || endedRecently) {
+              return
             }
+
+            event.preventDefault()
+            if (isTurnRunning) return
+            onSend()
           }}
           placeholder='输入消息...'
           value={input}
@@ -69,12 +96,16 @@ export function ChatComposer({
             </SelectContent>
           </Select>
           <Button
-            className='h-9 w-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90'
-            onClick={onSend}
+            className={
+              isTurnRunning
+                ? 'h-9 w-9 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                : 'h-9 w-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90'
+            }
+            onClick={isTurnRunning ? onCancelTurn : onSend}
             size='icon'
             type='button'
           >
-            <SendHorizonal className='h-4 w-4' />
+            {isTurnRunning ? <Square className='h-3.5 w-3.5' /> : <SendHorizonal className='h-4 w-4' />}
           </Button>
         </div>
       </div>

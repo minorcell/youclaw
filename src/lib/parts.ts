@@ -29,6 +29,17 @@ export function reasoningParts(parts: ContentPart[]): ReasoningPart[] {
   return parts.flatMap((part) => ('Reasoning' in part ? [part.Reasoning] : []))
 }
 
+export function partsToReasoningDisplay(parts: ContentPart[]): string {
+  return reasoningParts(parts)
+    .map((part) => {
+      if (part.text) return part.text
+      const anthropic = part.provider_metadata?.anthropic as { redacted_data?: unknown } | undefined
+      if (anthropic?.redacted_data) return '[reasoning redacted by provider]'
+      return ''
+    })
+    .join('')
+}
+
 export function visibleMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.filter((message) => message.role !== 'system')
 }

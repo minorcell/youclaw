@@ -3,26 +3,26 @@ import { Clock3, FolderCode, Hammer, ShieldAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import type { RunViewState } from '@/lib/types'
+import type { TurnViewState } from '@/lib/types'
 
 interface TimelinePanelProps {
-  run: RunViewState | null
+  turn: TurnViewState | null
   onResolveApproval: (approvalId: string, approved: boolean) => void
 }
 
-export function TimelinePanel({ run, onResolveApproval }: TimelinePanelProps) {
-  const timelineItems = run ? [...run.timeline, ...Object.values(run.liveStepsById)] : []
+export function TimelinePanel({ turn, onResolveApproval }: TimelinePanelProps) {
+  const timelineItems = turn ? [...turn.timeline, ...Object.values(turn.liveStepsById)] : []
 
   return (
     <Card className='flex h-full flex-col overflow-hidden'>
       <div className='border-b border-border/70 p-5'>
         <p className='text-xs uppercase tracking-[0.24em] text-muted-foreground'>Tool Timeline</p>
         <h2 className='mt-2 text-xl font-semibold'>
-          {run ? `Run ${run.run.id.slice(0, 8)}` : 'No active run'}
+          {turn ? `Turn ${turn.turn.id.slice(0, 8)}` : 'No active turn'}
         </h2>
       </div>
       <div className='flex-1 space-y-3 overflow-y-auto p-4'>
-        {run ? (
+        {turn ? (
           timelineItems.map((item) => (
             <Card className='p-4' key={item.id}>
               {item.kind === 'step' ? (

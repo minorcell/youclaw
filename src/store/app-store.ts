@@ -3,16 +3,16 @@ import { create } from 'zustand'
 import type {
   BootstrapPayload,
   ChatMessage,
-  ChatRun,
+  ChatTurn,
   ChatSession,
   ProviderAccount,
   ProvidersChangedPayload,
   ReasoningTokenPayload,
-  RunCancelledPayload,
-  RunFailedPayload,
-  RunFinishedPayload,
-  RunStartedPayload,
-  RunViewState,
+  TurnCancelledPayload,
+  TurnFailedPayload,
+  TurnFinishedPayload,
+  TurnStartedPayload,
+  TurnViewState,
   SessionsChangedPayload,
   StepFinishedPayload,
   StepStartedPayload,
@@ -34,8 +34,8 @@ interface AppStoreState {
   sessions: ChatSession[]
   messagesBySession: Record<string, ChatMessage[]>
   approvalsById: Record<string, ToolApproval>
-  runsById: Record<string, RunViewState>
-  activeRunIdBySession: Record<string, string>
+  turnsById: Record<string, TurnViewState>
+  activeTurnIdBySession: Record<string, string>
   activeSessionId: string | null
   lastOpenedSessionId: string | null
   lastError: string | null
@@ -89,29 +89,29 @@ function upsertTimelineItem(items: TimelineItem[], nextItem: TimelineItem): Time
   return clone
 }
 
-function getOrCreateRunView(state: AppStoreState, run: ChatRun): RunViewState {
+function getOrCreateTurnView(state: AppStoreState, turn: ChatTurn): TurnViewState {
   return (
-    state.runsById[run.id] ?? {
-      run,
-      sessionId: run.session_id,
+    state.turnsById[turn.id] ?? {
+      turn,
+      sessionId: turn.session_id,
       timeline: [],
       liveStepsById: {},
       usageTotal: undefined,
-      error: run.error_message ?? undefined,
+      error: turn.error_message ?? undefined,
     }
   )
 }
 
-function buildActiveRunIdBySession(runs: ChatRun[]): Record<string, string> {
-  const activeRunBySession: Record<string, ChatRun> = {}
-  for (const run of runs) {
-    const current = activeRunBySession[run.session_id]
-    if (!current || run.created_at.localeCompare(current.created_at) > 0) {
-      activeRunBySession[run.session_id] = run
+function buildActiveTurnIdBySession(turns: ChatTurn[]): Record<string, string> {
+  const activeTurnBySession: Record<string, ChatTurn> = {}
+  for (const turn of turns) {
+    const current = activeTurnBySession[turn.session_id]
+    if (!current || turn.created_at.localeCompare(current.created_at) > 0) {
+      activeTurnBySession[turn.session_id] = turn
     }
   }
   return Object.fromEntries(
-    Object.entries(activeRunBySession).map(([sessionId, run]) => [sessionId, run.id]),
+    Object.entries(activeTurnBySession).map(([sessionId, turn]) => [sessionId, turn.id]),
   )
 }
 
@@ -123,8 +123,8 @@ export const useAppStore = create<AppStoreState>((set) => ({
   sessions: [],
   messagesBySession: {},
   approvalsById: {},
-  runsById: {},
-  activeRunIdBySession: {},
+  turnsById: {},
+  activeTurnIdBySession: {},
   activeSessionId: null,
   lastOpenedSessionId: null,
   lastError: null,
@@ -154,19 +154,19 @@ export const useAppStore = create<AppStoreState>((set) => ({
           next.approvalsById = Object.fromEntries(
             payload.approvals.map((approval) => [approval.id, approval]),
           )
-          next.runsById = Object.fromEntries(
-            payload.runs.map((run) => [
-              run.id,
+          next.turnsById = Object.fromEntries(
+            payload.turns.map((turn) => [
+              turn.id,
               {
-                run,
-                sessionId: run.session_id,
+                turn,
+                sessionId: turn.session_id,
                 timeline: [],
                 liveStepsById: {},
-                error: run.error_message ?? undefined,
+                error: turn.error_message ?? undefined,
               },
             ]),
           )
-          next.activeRunIdBySession = buildActiveRunIdBySession(payload.runs)
+          next.activeTurnIdBySession = buildActiveTurnIdBySession(payload.turns)
           next.lastOpenedSessionId = payload.last_opened_session_id
           next.activeSessionId =
             state.activeSessionId ??
@@ -202,36 +202,36 @@ export const useAppStore = create<AppStoreState>((set) => ({
           next.lastError = null
           return next as AppStoreState
         }
-        case 'chat.run.started': {
-          const payload = envelope.payload as RunStartedPayload
+        case 'chat.turn.started': {
+          const payload = envelope.payload as TurnStartedPayload
           const messages = mergeUniqueMessages(state.messagesBySession[payload.session_id] ?? [], [
             payload.user_message,
           ])
-          const current = getOrCreateRunView(state, payload.run)
+          const current = getOrCreateTurnView(state, payload.turn)
           next.messagesBySession = {
             ...state.messagesBySession,
             [payload.session_id]: messages,
           }
-          next.runsById = {
-            ...state.runsById,
-            [payload.run.id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn.id]: {
               ...current,
-              run: payload.run,
+              turn: payload.turn,
               sessionId: payload.session_id,
               timeline: [],
               liveStepsById: {},
               error: undefined,
             },
           }
-          next.activeRunIdBySession = {
-            ...state.activeRunIdBySession,
-            [payload.session_id]: payload.run.id,
+          next.activeTurnIdBySession = {
+            ...state.activeTurnIdBySession,
+            [payload.session_id]: payload.turn.id,
           }
           return next as AppStoreState
         }
-        case 'chat.token': {
+        case 'chat.step.token': {
           const payload = envelope.payload as TokenPayload
-          const current = state.runsById[payload.run_id]
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
           const existingStep = current.liveStepsById[stepId]
@@ -248,9 +248,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 outputText: payload.text,
                 reasoningText: '',
               }
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
               liveStepsById: {
                 ...current.liveStepsById,
@@ -260,9 +260,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case 'chat.reasoning.token': {
+        case 'chat.step.reasoning.token': {
           const payload = envelope.payload as ReasoningTokenPayload
-          const current = state.runsById[payload.run_id]
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
           const existingStep = current.liveStepsById[stepId]
@@ -279,9 +279,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 outputText: '',
                 reasoningText: payload.text,
               }
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
               liveStepsById: {
                 ...current.liveStepsById,
@@ -293,13 +293,13 @@ export const useAppStore = create<AppStoreState>((set) => ({
         }
         case 'chat.step.started': {
           const payload = envelope.payload as StepStartedPayload
-          const current = state.runsById[payload.run_id]
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
           const existingStep = current.liveStepsById[stepId]
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
               liveStepsById: {
                 ...current.liveStepsById,
@@ -318,14 +318,14 @@ export const useAppStore = create<AppStoreState>((set) => ({
         }
         case 'chat.step.finished': {
           const payload = envelope.payload as StepFinishedPayload
-          const current = state.runsById[payload.run_id]
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
           const stepId = `step-${payload.step.step}`
           const liveStepsById = { ...current.liveStepsById }
           delete liveStepsById[stepId]
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
                 id: stepId,
@@ -341,18 +341,18 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case 'chat.tool.requested': {
+        case 'chat.step.tool.requested': {
           const payload = envelope.payload as ToolRequestedPayload
-          const current = state.runsById[payload.run_id]
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
           const approvalsById = { ...state.approvalsById }
           if (payload.approval) {
             approvalsById[payload.approval.id] = payload.approval
           }
           next.approvalsById = approvalsById
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
                 id: `tool-${payload.tool_call.call_id}`,
@@ -366,13 +366,13 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case 'chat.tool.finished': {
+        case 'chat.step.tool.finished': {
           const payload = envelope.payload as ToolFinishedPayload
-          const current = state.runsById[payload.run_id]
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
                 id: `tool-${payload.tool_call.call_id}`,
@@ -387,9 +387,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case 'chat.run.finished': {
-          const payload = envelope.payload as RunFinishedPayload
-          const current = getOrCreateRunView(state, payload.run)
+        case 'chat.turn.finished': {
+          const payload = envelope.payload as TurnFinishedPayload
+          const current = getOrCreateTurnView(state, payload.turn)
           const messages = mergeUniqueMessages(
             state.messagesBySession[payload.session_id] ?? [],
             payload.new_messages,
@@ -398,11 +398,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
             ...state.messagesBySession,
             [payload.session_id]: messages,
           }
-          next.runsById = {
-            ...state.runsById,
-            [payload.run.id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn.id]: {
               ...current,
-              run: payload.run,
+              turn: payload.turn,
               liveStepsById: {},
               usageTotal: payload.usage_total,
               error: undefined,
@@ -410,19 +410,19 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case 'chat.run.failed': {
-          const payload = envelope.payload as RunFailedPayload
-          const current = state.runsById[payload.run_id]
+        case 'chat.turn.failed': {
+          const payload = envelope.payload as TurnFailedPayload
+          const current = state.turnsById[payload.turn_id]
           if (!current) {
             next.lastError = payload.error
             return next as AppStoreState
           }
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
-              run: {
-                ...current.run,
+              turn: {
+                ...current.turn,
                 status: 'failed',
                 error_message: payload.error,
               },
@@ -433,21 +433,21 @@ export const useAppStore = create<AppStoreState>((set) => ({
           next.lastError = payload.error
           return next as AppStoreState
         }
-        case 'chat.run.cancelled': {
-          const payload = envelope.payload as RunCancelledPayload
-          const current = state.runsById[payload.run_id]
+        case 'chat.turn.cancelled': {
+          const payload = envelope.payload as TurnCancelledPayload
+          const current = state.turnsById[payload.turn_id]
           if (!current) return state
-          next.runsById = {
-            ...state.runsById,
-            [payload.run_id]: {
+          next.turnsById = {
+            ...state.turnsById,
+            [payload.turn_id]: {
               ...current,
-              run: {
-                ...current.run,
+              turn: {
+                ...current.turn,
                 status: 'cancelled',
-                error_message: 'Run cancelled',
+                error_message: 'Turn cancelled',
               },
               liveStepsById: {},
-              error: 'Run cancelled',
+              error: 'Turn cancelled',
             },
           }
           return next as AppStoreState
