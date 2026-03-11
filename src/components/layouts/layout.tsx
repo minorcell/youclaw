@@ -270,7 +270,7 @@ export function AppLayout() {
             onCreateSession={() => void handleCreateSession()}
             onDeleteSession={(id) => void handleDeleteSession(id)}
             onOpenSettings={() => updateSettingsQuery(true)}
-            onRenameSession={(id, title) => void handleRenameSession(id, title)}
+            onRenameSession={handleRenameSession}
             onSelectSession={handleSelectSession}
             providers={providers}
             sessions={sessions}
