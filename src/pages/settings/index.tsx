@@ -151,8 +151,6 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
     return providerAccounts.find((provider) => provider.id === selectedProviderId) ?? null
   }, [providerAccounts, selectedProviderId])
 
-  const activeSection = sectionMeta[section]
-
   function handleSectionChange(nextSection: SettingsSection) {
     setSection(nextSection)
   }
@@ -276,19 +274,15 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent
-        className='h-[min(860px,calc(100dvh-1.5rem))] w-[min(1120px,calc(100vw-1.5rem))] max-w-[min(1120px,calc(100vw-1.5rem))] overflow-hidden rounded-3xl border border-border/70 bg-card p-0 shadow-[0_36px_110px_-56px_rgba(0,0,0,0.45)] sm:max-w-[min(1120px,calc(100vw-1.5rem))]'
+        className='h-[min(860px,calc(100dvh-1.5rem))] w-[min(1120px,calc(100vw-1.5rem))] max-w-[min(1120px,calc(100vw-1.5rem))] overflow-hidden rounded-3xl bg-card p-0 shadow-[0_36px_110px_-56px_rgba(0,0,0,0.45)] sm:max-w-[min(1120px,calc(100vw-1.5rem))]'
         showCloseButton={false}
       >
         <DialogTitle className='sr-only'>设置</DialogTitle>
 
         <div className='flex h-full min-h-0 flex-col select-none'>
-          <header className='flex items-start justify-between border-b border-border/70 bg-card/80 px-4 py-4 sm:px-6'>
+          <header className='flex items-start justify-between bg-card/80 px-4 py-2 sm:px-6'>
             <div>
               <p className='text-xs uppercase tracking-[0.18em] text-muted-foreground'>设置</p>
-              <h3 className='mt-1 text-xl font-semibold tracking-tight sm:text-2xl'>
-                {activeSection.label}
-              </h3>
-              <p className='mt-1 text-sm text-muted-foreground'>{activeSection.description}</p>
             </div>
             <Button
               aria-label='Close settings'
@@ -302,7 +296,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
           </header>
 
           <div className='grid min-h-0 flex-1 bg-background/70 md:grid-cols-[248px_minmax(0,1fr)]'>
-            <aside className='hidden border-r border-border/70 bg-muted/35 p-3 md:block'>
+            <aside className='hidden bg-muted/35 p-3 md:block'>
               <nav aria-label='设置导航' className='space-y-2'>
                 {sections.map((itemId) => {
                   const item = sectionMeta[itemId]
@@ -311,10 +305,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                     <button
                       aria-current={section === itemId ? 'page' : undefined}
                       className={cn(
-                        'w-full rounded-xl border px-3 py-2.5 text-left transition-colors',
+                        'w-full rounded-xl px-3 py-2.5 text-left transition-colors',
                         section === itemId
-                          ? 'border-border bg-background text-foreground'
-                          : 'border-transparent bg-transparent text-muted-foreground hover:border-border/60 hover:bg-background/80 hover:text-foreground',
+                          ? 'bg-background text-foreground'
+                          : 'bg-transparent text-muted-foreground hover:bg-background/80 hover:text-foreground',
                       )}
                       key={itemId}
                       onClick={() => handleSectionChange(itemId)}
@@ -331,7 +325,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             </aside>
 
             <section className='flex min-h-0 flex-1 flex-col'>
-              <div className='border-b border-border/70 p-3 md:hidden'>
+              <div className='p-3 md:hidden'>
                 <div className='grid grid-cols-2 gap-2'>
                   {sections.map((itemId) => {
                     const item = sectionMeta[itemId]
@@ -339,10 +333,10 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
                     return (
                       <button
                         className={cn(
-                          'flex items-center justify-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium transition-colors',
+                          'flex items-center justify-center gap-2 rounded-xl px-2 py-2 text-sm font-medium transition-colors',
                           section === itemId
-                            ? 'border-border bg-background text-foreground'
-                            : 'border-border/50 bg-card/50 text-muted-foreground',
+                            ? 'bg-background text-foreground'
+                            : 'bg-card/50 text-muted-foreground',
                         )}
                         key={itemId}
                         onClick={() => handleSectionChange(itemId)}
@@ -398,7 +392,7 @@ export function SettingsModal({ open, onOpenChange }: SettingsModalProps) {
             </section>
           </div>
 
-          <footer className='flex items-center justify-end gap-2 border-t border-border/70 bg-muted/35 px-4 py-3 sm:px-6 sm:py-4'>
+          <footer className='flex items-center justify-end gap-2 bg-muted/35 px-4 py-3 sm:px-6 sm:py-4'>
             <Button onClick={() => onOpenChange(false)} type='button'>
               完成
             </Button>

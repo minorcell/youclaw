@@ -214,7 +214,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
 
   if (loading) {
     return (
-      <div className='rounded-xl border border-border/70 bg-background/75 px-4 py-6 text-sm text-muted-foreground'>
+      <div className='rounded-xl bg-background/75 px-4 py-6 text-sm text-muted-foreground'>
         <Loader2 className='mr-2 inline h-4 w-4 animate-spin' />
         {mode === 'config' ? '正在加载 Agent 配置...' : '正在加载记忆文件...'}
       </div>
@@ -223,7 +223,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
 
   if (mode === 'config') {
     return (
-      <Card className='border border-border/70 bg-background/80'>
+      <Card className='bg-background/80'>
         <CardHeader>
           <CardTitle>Agent 配置</CardTitle>
           <CardDescription>调整 steps 与上下文压缩阈值。</CardDescription>
@@ -269,7 +269,10 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
               <Input
                 id='agent-keep-recent'
                 onChange={(event) =>
-                  setForm((prev) => ({ ...prev, keepRecent: event.target.value }))
+                  setForm((prev) => ({
+                    ...prev,
+                    keepRecent: event.target.value,
+                  }))
                 }
                 value={form.keepRecent}
               />
@@ -297,7 +300,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
   }
 
   return (
-    <Card className='border border-border/70 bg-background/80'>
+    <Card className='bg-background/80'>
       <CardHeader>
         <CardTitle>记忆文件</CardTitle>
         <CardDescription>
@@ -308,7 +311,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
         <div className='space-y-1.5'>
           <Label htmlFor='memory-file-select'>文件</Label>
           <select
-            className='h-9 w-full rounded-md border border-input bg-background px-3 text-sm'
+            className='h-9 w-full rounded-md bg-background px-3 text-sm'
             id='memory-file-select'
             onChange={(event) => setSelectedPath(event.target.value)}
             value={selectedPath}
@@ -326,7 +329,7 @@ export function AgentSettingsSection({ mode }: AgentSettingsSectionProps) {
         <div className='space-y-1.5'>
           <Label htmlFor='memory-file-content'>内容</Label>
           <Textarea
-            className='min-h-[420px] font-mono text-xs leading-5'
+            className='min-h-105 font-mono text-xs leading-5'
             id='memory-file-content'
             onChange={(event) => setFileContent(event.target.value)}
             placeholder={fileLoading ? '读取中...' : '选择文件后可编辑'}

@@ -96,15 +96,15 @@ function statusLabel(status: string): string {
 
 function statusBadgeClass(status: string): string {
   if (status === 'completed') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
+    return 'bg-emerald-500/10 text-emerald-700'
   }
   if (status === 'failed') {
-    return 'border-destructive/30 bg-destructive/10 text-destructive'
+    return 'bg-destructive/10 text-destructive'
   }
   if (status === 'cancelled') {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-700'
+    return 'bg-amber-500/10 text-amber-700'
   }
-  return 'border-border bg-background text-foreground'
+  return 'bg-background text-foreground'
 }
 
 function errorMessageFromUnknown(error: unknown): string {
@@ -127,7 +127,7 @@ function errorMessageFromUnknown(error: unknown): string {
 
 function SummaryItem({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className='rounded-xl border border-border/70 bg-background/80 p-3'>
+    <div className='rounded-xl bg-background/80 p-3'>
       <p className='text-xs uppercase tracking-[0.16em] text-muted-foreground'>{label}</p>
       <p className='mt-2 text-xl font-semibold tracking-tight'>{value}</p>
       {hint ? <p className='mt-1 text-xs text-muted-foreground'>{hint}</p> : null}
@@ -151,7 +151,7 @@ function PaginationBar({
   onNext: () => void
 }) {
   return (
-    <div className='flex items-center justify-end gap-2 border-t border-border/70 pt-3'>
+    <div className='flex items-center justify-end gap-2 pt-3'>
       <p className='mr-auto text-xs text-muted-foreground'>共 {formatNumber(total)} 条</p>
       <Button
         disabled={loading || page <= 1}
@@ -485,14 +485,14 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
 
   return (
     <div className='space-y-4'>
-      <Card className='border border-border/70 bg-card/80 py-0 shadow-none'>
-        <CardHeader className='space-y-4 border-b border-border/70 py-4'>
+      <Card className='bg-card/80 py-0 shadow-none'>
+        <CardHeader className='space-y-4 py-4'>
           <div className='flex flex-wrap items-center justify-between gap-3'>
             <div>
               <CardTitle>使用概览</CardTitle>
               <CardDescription>按时间范围查看 Turn 与 Token 消耗。</CardDescription>
             </div>
-            <div className='flex items-center gap-2 rounded-xl border border-border/70 bg-background/80 p-1'>
+            <div className='flex items-center gap-2 rounded-xl bg-background/80 p-1'>
               {rangeOptions.map((item) => (
                 <Button
                   className={cn('h-8 rounded-lg px-3', range === item.value && 'shadow-none')}
@@ -533,7 +533,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
         </CardContent>
       </Card>
 
-      <Card className='border border-border/70 bg-card/80 py-0 shadow-none'>
+      <Card className='bg-card/80 py-0 shadow-none'>
         <CardContent className='space-y-4 py-4'>
           <Tabs
             onValueChange={(value) => {
@@ -614,7 +614,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                   </SelectContent>
                 </Select>
 
-                <label className='flex items-center justify-end gap-2 rounded-xl border border-border/70 bg-background/80 px-3 py-2 text-sm'>
+                <label className='flex items-center justify-end gap-2 rounded-xl bg-background/80 px-3 py-2 text-sm'>
                   详情记录开关
                   <Switch
                     checked={usageSettings?.detail_logging_enabled ?? false}
@@ -626,7 +626,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
 
               <div className='space-y-2'>
                 {logsLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl border border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='flex items-center gap-2 rounded-xl px-3 py-5 text-sm text-muted-foreground'>
                     <Loader2 className='h-4 w-4 animate-spin' /> 加载 Turn 日志中...
                   </div>
                 ) : logsData?.items.length ? (
@@ -634,21 +634,18 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     const isExpanded = expandedTurnId === item.turn_id
                     const detailPayload = detailsByTurnId[item.turn_id]
                     return (
-                      <div
-                        className='rounded-xl border border-border/70 bg-background/75 p-3'
-                        key={item.turn_id}
-                      >
+                      <div className='rounded-xl bbg-background/75 p-3' key={item.turn_id}>
                         <div className='flex flex-wrap items-center gap-2'>
-                          <Badge className={cn('border', statusBadgeClass(item.status))}>
+                          <Badge className={cn('', statusBadgeClass(item.status))}>
                             {statusLabel(item.status)}
                           </Badge>
-                          <Badge className='border-border bg-card text-foreground'>
+                          <Badge className='bg-card text-foreground'>
                             {item.provider_name ?? '未绑定服务商'}
                           </Badge>
-                          <Badge className='border-border bg-card text-foreground'>
+                          <Badge className='bg-card text-foreground'>
                             {item.model_name ?? item.model ?? '未绑定模型'}
                           </Badge>
-                          <Badge className='border-border bg-card text-foreground'>
+                          <Badge className='bg-card text-foreground'>
                             详情{item.detail_logged ? '开启' : '关闭'}
                           </Badge>
                         </div>
@@ -686,28 +683,28 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                         </div>
 
                         {isExpanded ? (
-                          <div className='mt-3 space-y-2 rounded-xl border border-border/70 bg-muted/35 p-2'>
+                          <div className='mt-3 space-y-2 rounded-xl bg-muted/35 p-2'>
                             {detailPayload?.tools.length ? (
                               detailPayload.tools.map((tool) => (
                                 <div
-                                  className='rounded-lg border border-border/60 bg-background/80 px-3 py-2'
+                                  className='rounded-lg bg-background/80 px-3 py-2'
                                   key={tool.id}
                                 >
                                   <div className='flex flex-wrap items-center gap-2 text-xs'>
-                                    <Badge className='border-border bg-card text-foreground'>
+                                    <Badge className='bg-card text-foreground'>
                                       {tool.tool_name}
                                     </Badge>
                                     {tool.tool_action ? (
-                                      <Badge className='border-border bg-card text-foreground'>
+                                      <Badge className='bg-card text-foreground'>
                                         {tool.tool_action}
                                       </Badge>
                                     ) : null}
                                     <Badge
                                       className={cn(
-                                        'border',
+                                        '',
                                         tool.is_error
-                                          ? 'border-destructive/30 bg-destructive/10 text-destructive'
-                                          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700',
+                                          ? 'bg-destructive/10 text-destructive'
+                                          : 'bg-emerald-500/10 text-emerald-700',
                                       )}
                                     >
                                       {tool.status}
@@ -732,7 +729,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     )
                   })
                 ) : (
-                  <div className='rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
                     当前筛选下暂无 Turn 日志。
                   </div>
                 )}
@@ -751,13 +748,13 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
             <TabsContent className='pt-3' value='providers'>
               <div className='space-y-2'>
                 {providersLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl border border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='flex items-center gap-2 rounded-xl  px-3 py-5 text-sm text-muted-foreground'>
                     <Loader2 className='h-4 w-4 animate-spin' /> 加载供应商统计中...
                   </div>
                 ) : providersData?.items.length ? (
                   providersData.items.map((item, index) => (
                     <div
-                      className='grid gap-2 rounded-xl border border-border/70 bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
+                      className='grid gap-2 rounded-xl  bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
                       key={`${item.provider_id ?? 'unknown'}-${index}`}
                     >
                       <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
@@ -779,7 +776,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     </div>
                   ))
                 ) : (
-                  <div className='rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
                     当前范围暂无供应商统计。
                   </div>
                 )}
@@ -798,13 +795,13 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
             <TabsContent className='pt-3' value='models'>
               <div className='space-y-2'>
                 {modelsLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl border border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='flex items-center gap-2 rounded-xl  px-3 py-5 text-sm text-muted-foreground'>
                     <Loader2 className='h-4 w-4 animate-spin' /> 加载模型统计中...
                   </div>
                 ) : modelsData?.items.length ? (
                   modelsData.items.map((item, index) => (
                     <div
-                      className='grid gap-2 rounded-xl border border-border/70 bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
+                      className='grid gap-2 rounded-xl  bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
                       key={`${item.model_id ?? 'unknown'}-${index}`}
                     >
                       <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
@@ -831,7 +828,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     </div>
                   ))
                 ) : (
-                  <div className='rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
                     当前范围暂无模型统计。
                   </div>
                 )}
@@ -850,13 +847,13 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
             <TabsContent className='pt-3' value='tools'>
               <div className='space-y-2'>
                 {toolsLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl border border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='flex items-center gap-2 rounded-xl  px-3 py-5 text-sm text-muted-foreground'>
                     <Loader2 className='h-4 w-4 animate-spin' /> 加载工具统计中...
                   </div>
                 ) : toolsData?.items.length ? (
                   toolsData.items.map((item, index) => (
                     <div
-                      className='grid gap-2 rounded-xl border border-border/70 bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
+                      className='grid gap-2 rounded-xl  bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
                       key={`${item.tool_name}-${item.tool_action ?? 'all'}-${index}`}
                     >
                       <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
@@ -881,7 +878,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     </div>
                   ))
                 ) : (
-                  <div className='rounded-xl border border-dashed border-border/70 px-3 py-5 text-sm text-muted-foreground'>
+                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
                     当前范围暂无工具统计。
                   </div>
                 )}
