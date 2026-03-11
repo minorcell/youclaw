@@ -6,14 +6,14 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum RunStatus {
+pub enum TurnStatus {
     Running,
     Completed,
     Failed,
     Cancelled,
 }
 
-impl RunStatus {
+impl TurnStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -24,13 +24,13 @@ impl RunStatus {
     }
 }
 
-impl Display for RunStatus {
+impl Display for TurnStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for RunStatus {
+impl FromStr for TurnStatus {
     type Err = ();
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {

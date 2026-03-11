@@ -1,27 +1,26 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use chrono::{Local, Timelike};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
 
 use crate::backend::agent;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
-    new_chat_session, now_timestamp, AgentActiveHoursConfig, AgentConfigUpdateRequest,
-    AgentHeartbeatExecutedPayload, BindSessionProviderRequest, BootstrapRequest, ChatCancelRequest,
-    ChatSendRequest, ConnectionReadyPayload, CreateProviderModelRequest, CreateProviderRequest,
-    CreateSessionRequest, DeleteProviderModelRequest, DeleteSessionRequest, HeartbeatPayload,
-    MemoryGetRequest, MemorySearchRequest, TestProviderModelRequest, ToolApprovalResolveRequest,
-    UpdateProviderModelRequest, UpdateProviderRequest, UsageLogDetailRequest, UsageLogsListRequest,
-    UsageSettingsUpdateRequest, UsageStatsListRequest, UsageSummaryRequest,
+    now_timestamp, AgentConfigUpdateRequest,
+    BindSessionProviderRequest,
+    ChatTurnCancelRequest, ChatTurnStartRequest, ConnectionReadyPayload,
+    CreateProviderModelRequest, CreateProviderRequest, CreateSessionRequest,
+    DeleteProviderModelRequest, DeleteSessionRequest, MemoryGetRequest,
+    MemorySearchRequest, RenameSessionRequest, TestProviderModelRequest,
+    ToolApprovalResolveRequest, TurnStepsListPayload, TurnStepsListRequest,
+    UpdateProviderModelRequest, UpdateProviderRequest, UsageLogDetailRequest,
+    UsageLogsListRequest, UsageSettingsUpdateRequest, UsageStatsListRequest, UsageSummaryRequest,
     WorkspaceFileReadRequest, WorkspaceFileWriteRequest, WsEnvelope, WsKind,
 };
 use crate::backend::BackendState;
@@ -37,7 +36,6 @@ pub async fn start_ws_server(state: BackendState) -> AppResult<String> {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .with_state(Arc::new(state.clone()));
-    spawn_heartbeat_loop(state.clone());
     tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app).await {
             eprintln!("ws server stopped: {err}");
@@ -126,19 +124,7 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
 
     let response = match envelope.name.as_str() {
         "bootstrap.get" => {
-            let req = serde_json::from_value::<BootstrapRequest>(envelope.payload.clone())
-                .unwrap_or_default();
-            if req.heartbeat {
-                WsEnvelope::response_ok(
-                    envelope.id,
-                    envelope.name,
-                    HeartbeatPayload {
-                        server_time: now_timestamp(),
-                    },
-                )?
-            } else {
-                WsEnvelope::response_ok(envelope.id, envelope.name, state.bootstrap()?)?
-            }
+            WsEnvelope::response_ok(envelope.id, envelope.name, state.bootstrap()?)?
         }
         "providers.list" => {
             let payload = state.list_provider_snapshot()?;
@@ -201,6 +187,15 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
                 serde_json::json!({ "deleted": true }),
             )?
         }
+        "sessions.rename" => {
+            let req = serde_json::from_value::<RenameSessionRequest>(envelope.payload)?;
+            state.rename_session(&req.session_id, &req.title)?;
+            WsEnvelope::response_ok(
+                envelope.id,
+                envelope.name,
+                serde_json::json!({ "renamed": true }),
+            )?
+        }
         "sessions.bind_provider" => {
             let req = serde_json::from_value::<BindSessionProviderRequest>(envelope.payload)?;
             state.bind_session_provider(&req.session_id, &req.provider_profile_id)?;
@@ -210,28 +205,36 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
                 serde_json::json!({ "bound": true }),
             )?
         }
-        "chat.send" => {
-            let req = serde_json::from_value::<ChatSendRequest>(envelope.payload)?;
+        "chat.turn.start" => {
+            let req = serde_json::from_value::<ChatTurnStartRequest>(envelope.payload)?;
             if req.text.trim().is_empty() {
                 return Err(AppError::Validation(
                     "message text cannot be empty".to_string(),
                 ));
             }
-            let run_id = agent::start_run((*state).clone(), req.session_id, req.text)?;
+            let turn_id = agent::start_turn((*state).clone(), req.session_id, req.text)?;
             WsEnvelope::response_ok(
                 envelope.id,
                 envelope.name,
-                serde_json::json!({ "run_id": run_id }),
+                serde_json::json!({ "turn_id": turn_id }),
             )?
         }
-        "chat.cancel" => {
-            let req = serde_json::from_value::<ChatCancelRequest>(envelope.payload)?;
-            let cancelled = state.cancel_run(&req.run_id)?;
+        "chat.turn.cancel" => {
+            let req = serde_json::from_value::<ChatTurnCancelRequest>(envelope.payload)?;
+            let cancelled = state.cancel_turn(&req.turn_id)?;
             WsEnvelope::response_ok(
                 envelope.id,
                 envelope.name,
                 serde_json::json!({ "cancelled": cancelled }),
             )?
+        }
+        "chat.turn.steps.list" => {
+            let req = serde_json::from_value::<TurnStepsListRequest>(envelope.payload)?;
+            let payload = TurnStepsListPayload {
+                turn_id: req.turn_id.clone(),
+                steps: state.storage.list_turn_steps(&req.turn_id)?,
+            };
+            WsEnvelope::response_ok(envelope.id, envelope.name, payload)?
         }
         "agent.config.get" => {
             let payload = state.get_agent_config()?;
@@ -319,200 +322,4 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
         other => return Err(AppError::NotFound(format!("unknown request `{other}`"))),
     };
     Ok(response)
-}
-
-fn spawn_heartbeat_loop(state: BackendState) {
-    tokio::spawn(async move {
-        loop {
-            let config = match state.get_agent_config() {
-                Ok(config) => config,
-                Err(_) => {
-                    sleep(Duration::from_secs(30)).await;
-                    continue;
-                }
-            };
-
-            if !config.heartbeat.enabled {
-                sleep(Duration::from_secs(30)).await;
-                continue;
-            }
-
-            let interval = parse_heartbeat_every(&config.heartbeat.every);
-            sleep(interval).await;
-
-            let config = match state.get_agent_config() {
-                Ok(config) => config,
-                Err(err) => {
-                    let _ = state.ws_hub.emit(
-                        "agent.heartbeat.executed",
-                        AgentHeartbeatExecutedPayload {
-                            session_id: "main".to_string(),
-                            status: "failed".to_string(),
-                            run_id: None,
-                            reason: Some(err.message()),
-                        },
-                    );
-                    continue;
-                }
-            };
-            if !config.heartbeat.enabled {
-                continue;
-            }
-            if !within_active_hours(config.heartbeat.active_hours.as_ref()) {
-                let _ = state.ws_hub.emit(
-                    "agent.heartbeat.executed",
-                    AgentHeartbeatExecutedPayload {
-                        session_id: config.heartbeat.target.clone(),
-                        status: "skipped".to_string(),
-                        run_id: None,
-                        reason: Some("outside_active_hours".to_string()),
-                    },
-                );
-                continue;
-            }
-
-            let query = match state.workspace.read_heartbeat_query() {
-                Ok(query) => query,
-                Err(err) => {
-                    let _ = state.ws_hub.emit(
-                        "agent.heartbeat.executed",
-                        AgentHeartbeatExecutedPayload {
-                            session_id: config.heartbeat.target.clone(),
-                            status: "failed".to_string(),
-                            run_id: None,
-                            reason: Some(err.message()),
-                        },
-                    );
-                    continue;
-                }
-            };
-            if query.trim().is_empty() {
-                let _ = state.ws_hub.emit(
-                    "agent.heartbeat.executed",
-                    AgentHeartbeatExecutedPayload {
-                        session_id: config.heartbeat.target.clone(),
-                        status: "skipped".to_string(),
-                        run_id: None,
-                        reason: Some("empty_heartbeat_prompt".to_string()),
-                    },
-                );
-                continue;
-            }
-
-            let target_session = match ensure_heartbeat_session(&state, &config.heartbeat.target) {
-                Ok(session_id) => session_id,
-                Err(err) => {
-                    let _ = state.ws_hub.emit(
-                        "agent.heartbeat.executed",
-                        AgentHeartbeatExecutedPayload {
-                            session_id: config.heartbeat.target.clone(),
-                            status: "failed".to_string(),
-                            run_id: None,
-                            reason: Some(err.message()),
-                        },
-                    );
-                    continue;
-                }
-            };
-
-            match agent::start_run(state.clone(), target_session.clone(), query) {
-                Ok(run_id) => {
-                    let _ = state.ws_hub.emit(
-                        "agent.heartbeat.executed",
-                        AgentHeartbeatExecutedPayload {
-                            session_id: target_session,
-                            status: "executed".to_string(),
-                            run_id: Some(run_id),
-                            reason: None,
-                        },
-                    );
-                }
-                Err(err) => {
-                    let _ = state.ws_hub.emit(
-                        "agent.heartbeat.executed",
-                        AgentHeartbeatExecutedPayload {
-                            session_id: target_session,
-                            status: "failed".to_string(),
-                            run_id: None,
-                            reason: Some(err.message()),
-                        },
-                    );
-                }
-            }
-        }
-    });
-}
-
-fn parse_heartbeat_every(raw: &str) -> Duration {
-    let value = raw.trim().to_ascii_lowercase();
-    if let Some(hours) = value.strip_suffix('h') {
-        if let Ok(hours) = hours.parse::<u64>() {
-            if hours > 0 {
-                return Duration::from_secs(hours.saturating_mul(3600));
-            }
-        }
-    }
-    if let Some(minutes) = value.strip_suffix('m') {
-        if let Ok(minutes) = minutes.parse::<u64>() {
-            if minutes > 0 {
-                return Duration::from_secs(minutes.saturating_mul(60));
-            }
-        }
-    }
-    Duration::from_secs(30 * 60)
-}
-
-fn parse_hhmm(raw: &str) -> Option<u32> {
-    let mut parts = raw.trim().split(':');
-    let hour = parts.next()?.parse::<u32>().ok()?;
-    let minute = parts.next()?.parse::<u32>().ok()?;
-    if parts.next().is_some() || hour > 23 || minute > 59 {
-        return None;
-    }
-    Some(hour * 60 + minute)
-}
-
-fn within_active_hours(active: Option<&AgentActiveHoursConfig>) -> bool {
-    let Some(active) = active else {
-        return true;
-    };
-    let Some(start) = parse_hhmm(&active.start) else {
-        return true;
-    };
-    let Some(end) = parse_hhmm(&active.end) else {
-        return true;
-    };
-    let now = Local::now();
-    let current = now.hour() * 60 + now.minute();
-    if start <= end {
-        current >= start && current <= end
-    } else {
-        current >= start || current <= end
-    }
-}
-
-fn ensure_heartbeat_session(state: &BackendState, target: &str) -> AppResult<String> {
-    if let Ok(session) = state.storage.get_session(target) {
-        return Ok(session.id);
-    }
-    if target == "main" {
-        if let Some(session) = state
-            .storage
-            .list_sessions()?
-            .into_iter()
-            .find(|item| item.title.to_ascii_lowercase() == "main")
-        {
-            return Ok(session.id);
-        }
-    }
-
-    let mut session = new_chat_session(None);
-    session.id = target.to_string();
-    session.title = target.to_string();
-    if let Some(profile) = state.storage.list_provider_profiles()?.into_iter().next() {
-        session.provider_profile_id = Some(profile.id);
-    }
-    state.storage.insert_session(&session)?;
-    state.publish_sessions_changed()?;
-    Ok(session.id)
 }

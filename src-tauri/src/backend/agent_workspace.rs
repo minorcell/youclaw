@@ -6,19 +6,19 @@ use chrono::{SecondsFormat, Utc};
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::WorkspaceFileInfo;
 
-const FILE_ORDER: [(&str, bool); 3] = [
+const FILE_ORDER: [(&str, bool); 4] = [
     ("AGENTS.md", true),
     ("SOUL.md", true),
     ("PROFILE.md", false),
+    ("MEMORY.md", false),
 ];
 
-const TOP_LEVEL_TEMPLATE_FILES: [&str; 6] = [
+const TOP_LEVEL_TEMPLATE_FILES: [&str; 5] = [
     "AGENTS.md",
     "SOUL.md",
     "PROFILE.md",
     "MEMORY.md",
     "BOOTSTRAP.md",
-    "HEARTBEAT.md",
 ];
 
 const BOOTSTRAP_COMPLETED_FILE: &str = ".bootstrap_completed";
@@ -28,7 +28,6 @@ const ZH_SOUL_TEMPLATE: &str = include_str!("prompts/templates/SOUL.md");
 const ZH_PROFILE_TEMPLATE: &str = include_str!("prompts/templates/PROFILE.md");
 const ZH_MEMORY_TEMPLATE: &str = include_str!("prompts/templates/MEMORY.md");
 const ZH_BOOTSTRAP_TEMPLATE: &str = include_str!("prompts/templates/BOOTSTRAP.md");
-const ZH_HEARTBEAT_TEMPLATE: &str = include_str!("prompts/templates/HEARTBEAT.md");
 
 #[derive(Clone, Debug)]
 pub struct AgentWorkspace {
@@ -211,15 +210,6 @@ impl AgentWorkspace {
         Ok(())
     }
 
-    pub fn read_heartbeat_query(&self) -> AppResult<String> {
-        let path = self.root.join("HEARTBEAT.md");
-        if !path.exists() {
-            return Ok(String::new());
-        }
-        let content = fs::read_to_string(path)?;
-        Ok(content.trim().to_string())
-    }
-
     pub fn collect_memory_source_files(&self) -> AppResult<Vec<PathBuf>> {
         self.ensure_layout()?;
 
@@ -303,14 +293,13 @@ impl AgentWorkspace {
     }
 }
 
-fn templates_for_language() -> [(&'static str, &'static str); 6] {
+fn templates_for_language() -> [(&'static str, &'static str); 5] {
     [
         ("AGENTS.md", ZH_AGENTS_TEMPLATE),
         ("SOUL.md", ZH_SOUL_TEMPLATE),
         ("PROFILE.md", ZH_PROFILE_TEMPLATE),
         ("MEMORY.md", ZH_MEMORY_TEMPLATE),
         ("BOOTSTRAP.md", ZH_BOOTSTRAP_TEMPLATE),
-        ("HEARTBEAT.md", ZH_HEARTBEAT_TEMPLATE),
     ]
 }
 
@@ -417,7 +406,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let workspace = AgentWorkspace::new(dir.path());
         let copied = workspace.install_templates("en", true).expect("install");
-        assert_eq!(copied.len(), 6);
+        assert_eq!(copied.len(), 5);
 
         let root = workspace.root().to_path_buf();
         for name in [
@@ -426,7 +415,6 @@ mod tests {
             "PROFILE.md",
             "MEMORY.md",
             "BOOTSTRAP.md",
-            "HEARTBEAT.md",
         ] {
             assert!(root.join(name).is_file(), "missing {name}");
         }

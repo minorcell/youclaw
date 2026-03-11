@@ -20,7 +20,7 @@ pub struct UsageLogsListRequest {
     #[serde(default = "default_usage_range")]
     pub range: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_id: Option<String>,
+    pub provider_profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,7 +43,7 @@ pub struct UsageStatsListRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageLogDetailRequest {
-    pub run_id: String,
+    pub turn_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,7 +62,9 @@ pub struct UsagePage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSummaryPayload {
     pub range: String,
-    pub total_requests: u64,
+    pub total_turns: u64,
+    pub total_steps: u64,
+    pub avg_steps_per_turn: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_tokens: u64,
@@ -78,7 +80,7 @@ pub struct UsageSettingsPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageLogItem {
-    pub run_id: String,
+    pub turn_id: String,
     pub session_id: String,
     pub status: String,
     pub user_message: String,
@@ -90,6 +92,7 @@ pub struct UsageLogItem {
     pub started_at: String,
     pub finished_at: Option<String>,
     pub duration_ms: Option<u64>,
+    pub step_count: u32,
     pub detail_logged: bool,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -109,7 +112,7 @@ pub struct UsageLogsPayload {
 pub struct UsageProviderStatsItem {
     pub provider_id: Option<String>,
     pub provider_name: Option<String>,
-    pub request_count: u64,
+    pub turn_count: u64,
     pub completed_count: u64,
     pub failed_count: u64,
     pub cancelled_count: u64,
@@ -133,7 +136,7 @@ pub struct UsageModelStatsItem {
     pub model: Option<String>,
     pub provider_id: Option<String>,
     pub provider_name: Option<String>,
-    pub request_count: u64,
+    pub turn_count: u64,
     pub completed_count: u64,
     pub failed_count: u64,
     pub cancelled_count: u64,
@@ -170,7 +173,7 @@ pub struct UsageToolStatsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageToolLogItem {
     pub id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub session_id: String,
     pub tool_name: String,
     pub tool_action: Option<String>,
@@ -182,6 +185,6 @@ pub struct UsageToolLogItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageLogDetailPayload {
-    pub run_id: String,
+    pub turn_id: String,
     pub tools: Vec<UsageToolLogItem>,
 }

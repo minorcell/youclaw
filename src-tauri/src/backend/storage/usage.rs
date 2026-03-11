@@ -40,20 +40,20 @@ impl StorageService {
         })
     }
 
-    pub fn insert_run_usage_metric_start(
+    pub fn insert_turn_usage_metric_start(
         &self,
-        run: &ChatRun,
+        turn: &ChatTurn,
         provider: Option<&ProviderProfile>,
         detail_logged: bool,
     ) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO run_usage_metrics (
-                run_id, session_id, provider_profile_id, provider_id, provider_name,
-                model_id, model_name, model, status, user_message, started_at, detail_logged
+            "INSERT INTO turn_usage_metrics (
+                turn_id, session_id, provider_profile_id, provider_id, provider_name,
+                model_id, model_name, model, status, user_message, started_at, step_count, detail_logged
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-             ON CONFLICT(run_id) DO UPDATE SET
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)
+             ON CONFLICT(turn_id) DO UPDATE SET
                 session_id = excluded.session_id,
                 provider_profile_id = excluded.provider_profile_id,
                 provider_id = excluded.provider_id,
@@ -66,87 +66,114 @@ impl StorageService {
                 started_at = excluded.started_at,
                 detail_logged = excluded.detail_logged",
             params![
-                run.id,
-                run.session_id,
+                turn.id,
+                turn.session_id,
                 provider.map(|item| item.id.clone()),
                 provider.map(|item| item.provider_id.clone()),
                 provider.map(|item| item.name.clone()),
-                provider.map(|item| item.id.clone()),
+                provider.map(|item| item.model.clone()),
                 provider.map(|item| item.model_name.clone()),
                 provider.map(|item| item.model.clone()),
-                run.status.as_str(),
-                run.user_message,
-                run.created_at,
+                turn.status.as_str(),
+                turn.user_message,
+                turn.created_at,
                 if detail_logged { 1i64 } else { 0i64 },
             ],
         )?;
         Ok(())
     }
 
-    pub fn update_run_usage_metric(
+    pub fn update_turn_usage_metric(
         &self,
-        run: &ChatRun,
+        turn: &ChatTurn,
         usage: Option<&aquaregia::Usage>,
+        step_count: Option<u32>,
     ) -> AppResult<()> {
         let conn = self.open_connection()?;
         let started_at = conn
             .query_row(
-                "SELECT started_at FROM run_usage_metrics WHERE run_id = ?1",
-                [run.id.as_str()],
+                "SELECT started_at FROM turn_usage_metrics WHERE turn_id = ?1",
+                [turn.id.as_str()],
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
 
-        let duration_ms = calculate_duration_ms(started_at.as_deref(), run.finished_at.as_deref());
-        let usage_value = usage.cloned().unwrap_or_default();
+        let duration_ms = calculate_duration_ms(started_at.as_deref(), turn.finished_at.as_deref());
+        let (
+            input_tokens,
+            input_no_cache_tokens,
+            input_cache_read_tokens,
+            input_cache_write_tokens,
+            output_tokens,
+            output_text_tokens,
+            reasoning_tokens,
+            total_tokens,
+        ) = if let Some(usage) = usage {
+            (
+                Some(usage.input_tokens as i64),
+                Some(usage.input_no_cache_tokens as i64),
+                Some(usage.input_cache_read_tokens as i64),
+                Some(usage.input_cache_write_tokens as i64),
+                Some(usage.output_tokens as i64),
+                Some(usage.output_text_tokens as i64),
+                Some(usage.reasoning_tokens as i64),
+                Some(usage.total_tokens as i64),
+            )
+        } else {
+            (None, None, None, None, None, None, None, None)
+        };
         let changed = conn.execute(
-            "UPDATE run_usage_metrics
+            "UPDATE turn_usage_metrics
              SET status = ?2,
                  finished_at = ?3,
                  duration_ms = ?4,
-                 input_tokens = ?5,
-                 input_no_cache_tokens = ?6,
-                 input_cache_read_tokens = ?7,
-                 input_cache_write_tokens = ?8,
-                 output_tokens = ?9,
-                 output_text_tokens = ?10,
-                 reasoning_tokens = ?11,
-                 total_tokens = ?12
-             WHERE run_id = ?1",
+                 input_tokens = COALESCE(?5, input_tokens),
+                 input_no_cache_tokens = COALESCE(?6, input_no_cache_tokens),
+                 input_cache_read_tokens = COALESCE(?7, input_cache_read_tokens),
+                 input_cache_write_tokens = COALESCE(?8, input_cache_write_tokens),
+                 output_tokens = COALESCE(?9, output_tokens),
+                 output_text_tokens = COALESCE(?10, output_text_tokens),
+                 reasoning_tokens = COALESCE(?11, reasoning_tokens),
+                 total_tokens = COALESCE(?12, total_tokens),
+                 step_count = COALESCE(?13, step_count)
+             WHERE turn_id = ?1",
             params![
-                run.id,
-                run.status.as_str(),
-                run.finished_at,
+                turn.id,
+                turn.status.as_str(),
+                turn.finished_at,
                 duration_ms,
-                usage_value.input_tokens as i64,
-                usage_value.input_no_cache_tokens as i64,
-                usage_value.input_cache_read_tokens as i64,
-                usage_value.input_cache_write_tokens as i64,
-                usage_value.output_tokens as i64,
-                usage_value.output_text_tokens as i64,
-                usage_value.reasoning_tokens as i64,
-                usage_value.total_tokens as i64,
+                input_tokens,
+                input_no_cache_tokens,
+                input_cache_read_tokens,
+                input_cache_write_tokens,
+                output_tokens,
+                output_text_tokens,
+                reasoning_tokens,
+                total_tokens,
+                step_count.map(|value| value as i64),
             ],
         )?;
 
         if changed == 0 {
             let detail_logged = self.get_usage_detail_logging_enabled()?;
+            let usage_value = usage.cloned().unwrap_or_default();
             conn.execute(
-                "INSERT INTO run_usage_metrics (
-                    run_id, session_id, status, user_message, started_at,
-                    finished_at, duration_ms, detail_logged,
+                "INSERT INTO turn_usage_metrics (
+                    turn_id, session_id, status, user_message, started_at,
+                    finished_at, duration_ms, step_count, detail_logged,
                     input_tokens, input_no_cache_tokens, input_cache_read_tokens, input_cache_write_tokens,
                     output_tokens, output_text_tokens, reasoning_tokens, total_tokens
                  )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
-                    run.id,
-                    run.session_id,
-                    run.status.as_str(),
-                    run.user_message,
-                    run.created_at,
-                    run.finished_at,
+                    turn.id,
+                    turn.session_id,
+                    turn.status.as_str(),
+                    turn.user_message,
+                    turn.created_at,
+                    turn.finished_at,
                     duration_ms,
+                    step_count.unwrap_or(0) as i64,
                     if detail_logged { 1i64 } else { 0i64 },
                     usage_value.input_tokens as i64,
                     usage_value.input_no_cache_tokens as i64,
@@ -162,9 +189,9 @@ impl StorageService {
         Ok(())
     }
 
-    pub fn record_run_tool_metric(
+    pub fn record_turn_tool_metric(
         &self,
-        run_id: &str,
+        turn_id: &str,
         session_id: &str,
         tool_name: &str,
         tool_action: Option<&str>,
@@ -172,17 +199,17 @@ impl StorageService {
         duration_ms: Option<u64>,
         is_error: bool,
     ) -> AppResult<()> {
-        if !self.is_run_detail_logging_enabled(run_id)? {
+        if !self.is_turn_detail_logging_enabled(turn_id)? {
             return Ok(());
         }
 
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO run_tool_metrics (id, run_id, session_id, tool_name, tool_action, status, duration_ms, is_error, created_at)
+            "INSERT INTO turn_tool_metrics (id, turn_id, session_id, tool_name, tool_action, status, duration_ms, is_error, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 uuid::Uuid::new_v4().to_string(),
-                run_id,
+                turn_id,
                 session_id,
                 tool_name,
                 tool_action,
@@ -197,29 +224,33 @@ impl StorageService {
 
     pub fn usage_summary(&self, req: UsageSummaryRequest) -> AppResult<UsageSummaryPayload> {
         let conn = self.open_connection()?;
-        let (where_clause, params) = build_run_usage_where_clause(&req.range, None, None, None)?;
+        let (where_clause, params) = build_turn_usage_where_clause(&req.range, None, None, None)?;
         let sql = format!(
             "SELECT
-                COUNT(*) AS total_requests,
+                COUNT(*) AS total_turns,
+                COALESCE(SUM(step_count), 0),
+                COALESCE(AVG(step_count), 0),
                 COALESCE(SUM(input_tokens), 0),
                 COALESCE(SUM(output_tokens), 0),
                 COALESCE(SUM(reasoning_tokens), 0),
                 COALESCE(SUM(total_tokens), 0),
                 COALESCE(SUM(input_cache_read_tokens), 0),
                 COALESCE(SUM(input_cache_write_tokens), 0)
-             FROM run_usage_metrics{where_clause}"
+             FROM turn_usage_metrics{where_clause}"
         );
         let mut stmt = conn.prepare(&sql)?;
         stmt.query_row(params_from_iter(params), |row| {
             Ok(UsageSummaryPayload {
                 range: req.range.clone(),
-                total_requests: row.get::<_, i64>(0)? as u64,
-                input_tokens: row.get::<_, i64>(1)? as u64,
-                output_tokens: row.get::<_, i64>(2)? as u64,
-                reasoning_tokens: row.get::<_, i64>(3)? as u64,
-                total_tokens: row.get::<_, i64>(4)? as u64,
-                input_cache_read_tokens: row.get::<_, i64>(5)? as u64,
-                input_cache_write_tokens: row.get::<_, i64>(6)? as u64,
+                total_turns: row.get::<_, i64>(0)? as u64,
+                total_steps: row.get::<_, i64>(1)? as u64,
+                avg_steps_per_turn: row.get::<_, f64>(2)?,
+                input_tokens: row.get::<_, i64>(3)? as u64,
+                output_tokens: row.get::<_, i64>(4)? as u64,
+                reasoning_tokens: row.get::<_, i64>(5)? as u64,
+                total_tokens: row.get::<_, i64>(6)? as u64,
+                input_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                input_cache_write_tokens: row.get::<_, i64>(8)? as u64,
             })
         })
         .map_err(Into::into)
@@ -228,14 +259,14 @@ impl StorageService {
     pub fn list_usage_logs(&self, req: UsageLogsListRequest) -> AppResult<UsageLogsPayload> {
         let conn = self.open_connection()?;
         let (page, page_size, offset) = normalize_usage_pagination(req.page, req.page_size);
-        let (where_clause, base_params) = build_run_usage_where_clause(
+        let (where_clause, base_params) = build_turn_usage_where_clause(
             &req.range,
-            req.model_id.as_deref(),
+            req.provider_profile_id.as_deref(),
             req.status.as_deref(),
             req.detail_logged,
         )?;
 
-        let count_sql = format!("SELECT COUNT(*) FROM run_usage_metrics{where_clause}");
+        let count_sql = format!("SELECT COUNT(*) FROM turn_usage_metrics{where_clause}");
         let total = conn.query_row(&count_sql, params_from_iter(base_params.clone()), |row| {
             row.get::<_, i64>(0)
         })? as u64;
@@ -245,18 +276,18 @@ impl StorageService {
         list_params.push(SqlValue::Integer(offset as i64));
         let list_sql = format!(
             "SELECT
-                run_id, session_id, status, user_message,
+                turn_id, session_id, status, user_message,
                 provider_id, provider_name, model_id, model_name, model,
-                started_at, finished_at, duration_ms, detail_logged,
+                started_at, finished_at, duration_ms, step_count, detail_logged,
                 input_tokens, output_tokens, reasoning_tokens, total_tokens,
                 input_cache_read_tokens, input_cache_write_tokens
-             FROM run_usage_metrics{where_clause}
-             ORDER BY started_at DESC, run_id DESC
+             FROM turn_usage_metrics{where_clause}
+             ORDER BY started_at DESC, turn_id DESC
              LIMIT ? OFFSET ?"
         );
         let mut stmt = conn.prepare(&list_sql)?;
         let rows = stmt.query_map(params_from_iter(list_params), |row| {
-            let detail_logged = row.get::<_, i64>(12)? != 0;
+            let detail_logged = row.get::<_, i64>(13)? != 0;
             let duration_ms = row.get::<_, Option<i64>>(11)?.and_then(|value| {
                 if value >= 0 {
                     Some(value as u64)
@@ -265,7 +296,7 @@ impl StorageService {
                 }
             });
             Ok(UsageLogItem {
-                run_id: row.get(0)?,
+                turn_id: row.get(0)?,
                 session_id: row.get(1)?,
                 status: row.get(2)?,
                 user_message: row.get(3)?,
@@ -277,13 +308,14 @@ impl StorageService {
                 started_at: row.get(9)?,
                 finished_at: row.get(10)?,
                 duration_ms,
+                step_count: row.get::<_, i64>(12)? as u32,
                 detail_logged,
-                input_tokens: row.get::<_, i64>(13)? as u64,
-                output_tokens: row.get::<_, i64>(14)? as u64,
-                reasoning_tokens: row.get::<_, i64>(15)? as u64,
-                total_tokens: row.get::<_, i64>(16)? as u64,
-                input_cache_read_tokens: row.get::<_, i64>(17)? as u64,
-                input_cache_write_tokens: row.get::<_, i64>(18)? as u64,
+                input_tokens: row.get::<_, i64>(14)? as u64,
+                output_tokens: row.get::<_, i64>(15)? as u64,
+                reasoning_tokens: row.get::<_, i64>(16)? as u64,
+                total_tokens: row.get::<_, i64>(17)? as u64,
+                input_cache_read_tokens: row.get::<_, i64>(18)? as u64,
+                input_cache_write_tokens: row.get::<_, i64>(19)? as u64,
             })
         })?;
         let items = rows.collect::<Result<Vec<_>, _>>()?;
@@ -307,11 +339,11 @@ impl StorageService {
         let conn = self.open_connection()?;
         let (page, page_size, offset) = normalize_usage_pagination(req.page, req.page_size);
         let (where_clause, base_params) =
-            build_run_usage_where_clause(&req.range, None, None, None)?;
+            build_turn_usage_where_clause(&req.range, None, None, None)?;
 
         let count_sql = format!(
             "SELECT COUNT(*) FROM (
-                SELECT 1 FROM run_usage_metrics{where_clause}
+                SELECT 1 FROM turn_usage_metrics{where_clause}
                 GROUP BY provider_id, provider_name
             )"
         );
@@ -325,7 +357,7 @@ impl StorageService {
         let list_sql = format!(
             "SELECT
                 provider_id, provider_name,
-                COUNT(*) AS request_count,
+                COUNT(*) AS turn_count,
                 SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
                 SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
@@ -334,9 +366,9 @@ impl StorageService {
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
                 COALESCE(SUM(input_cache_read_tokens), 0) AS input_cache_read_tokens,
                 COALESCE(SUM(input_cache_write_tokens), 0) AS input_cache_write_tokens
-             FROM run_usage_metrics{where_clause}
+             FROM turn_usage_metrics{where_clause}
              GROUP BY provider_id, provider_name
-             ORDER BY request_count DESC, total_tokens DESC
+             ORDER BY turn_count DESC, total_tokens DESC
              LIMIT ? OFFSET ?"
         );
         let mut stmt = conn.prepare(&list_sql)?;
@@ -344,7 +376,7 @@ impl StorageService {
             Ok(UsageProviderStatsItem {
                 provider_id: row.get(0)?,
                 provider_name: row.get(1)?,
-                request_count: row.get::<_, i64>(2)? as u64,
+                turn_count: row.get::<_, i64>(2)? as u64,
                 completed_count: row.get::<_, i64>(3)? as u64,
                 failed_count: row.get::<_, i64>(4)? as u64,
                 cancelled_count: row.get::<_, i64>(5)? as u64,
@@ -375,11 +407,11 @@ impl StorageService {
         let conn = self.open_connection()?;
         let (page, page_size, offset) = normalize_usage_pagination(req.page, req.page_size);
         let (where_clause, base_params) =
-            build_run_usage_where_clause(&req.range, None, None, None)?;
+            build_turn_usage_where_clause(&req.range, None, None, None)?;
 
         let count_sql = format!(
             "SELECT COUNT(*) FROM (
-                SELECT 1 FROM run_usage_metrics{where_clause}
+                SELECT 1 FROM turn_usage_metrics{where_clause}
                 GROUP BY model_id, model_name, model, provider_id, provider_name
             )"
         );
@@ -393,7 +425,7 @@ impl StorageService {
         let list_sql = format!(
             "SELECT
                 model_id, model_name, model, provider_id, provider_name,
-                COUNT(*) AS request_count,
+                COUNT(*) AS turn_count,
                 SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
                 SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_count,
@@ -403,9 +435,9 @@ impl StorageService {
                 COALESCE(SUM(input_cache_read_tokens), 0) AS input_cache_read_tokens,
                 COALESCE(SUM(input_cache_write_tokens), 0) AS input_cache_write_tokens,
                 AVG(duration_ms) AS avg_duration_ms
-             FROM run_usage_metrics{where_clause}
+             FROM turn_usage_metrics{where_clause}
              GROUP BY model_id, model_name, model, provider_id, provider_name
-             ORDER BY request_count DESC, total_tokens DESC
+             ORDER BY turn_count DESC, total_tokens DESC
              LIMIT ? OFFSET ?"
         );
         let mut stmt = conn.prepare(&list_sql)?;
@@ -416,7 +448,7 @@ impl StorageService {
                 model: row.get(2)?,
                 provider_id: row.get(3)?,
                 provider_name: row.get(4)?,
-                request_count: row.get::<_, i64>(5)? as u64,
+                turn_count: row.get::<_, i64>(5)? as u64,
                 completed_count: row.get::<_, i64>(6)? as u64,
                 failed_count: row.get::<_, i64>(7)? as u64,
                 cancelled_count: row.get::<_, i64>(8)? as u64,
@@ -455,8 +487,8 @@ impl StorageService {
         let count_sql = format!(
             "SELECT COUNT(*) FROM (
                 SELECT 1
-                FROM run_tool_metrics t
-                LEFT JOIN run_usage_metrics r ON r.run_id = t.run_id
+                FROM turn_tool_metrics t
+                LEFT JOIN turn_usage_metrics r ON r.turn_id = t.turn_id
                 {where_clause}
                 GROUP BY t.tool_name, t.tool_action
             )"
@@ -476,8 +508,8 @@ impl StorageService {
                 SUM(CASE WHEN t.is_error = 0 THEN 1 ELSE 0 END) AS success_count,
                 SUM(CASE WHEN t.is_error = 1 THEN 1 ELSE 0 END) AS error_count,
                 AVG(t.duration_ms) AS avg_duration_ms
-             FROM run_tool_metrics t
-             LEFT JOIN run_usage_metrics r ON r.run_id = t.run_id
+             FROM turn_tool_metrics t
+             LEFT JOIN turn_usage_metrics r ON r.turn_id = t.turn_id
              {where_clause}
              GROUP BY t.tool_name, t.tool_action
              ORDER BY call_count DESC, error_count DESC
@@ -512,12 +544,12 @@ impl StorageService {
     pub fn usage_log_detail(&self, req: UsageLogDetailRequest) -> AppResult<UsageLogDetailPayload> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, run_id, session_id, tool_name, tool_action, status, duration_ms, is_error, created_at
-             FROM run_tool_metrics
-             WHERE run_id = ?1
+            "SELECT id, turn_id, session_id, tool_name, tool_action, status, duration_ms, is_error, created_at
+             FROM turn_tool_metrics
+             WHERE turn_id = ?1
              ORDER BY created_at DESC, id DESC",
         )?;
-        let rows = stmt.query_map([req.run_id.as_str()], |row| {
+        let rows = stmt.query_map([req.turn_id.as_str()], |row| {
             let duration_ms = row.get::<_, Option<i64>>(6)?.and_then(|value| {
                 if value >= 0 {
                     Some(value as u64)
@@ -527,7 +559,7 @@ impl StorageService {
             });
             Ok(UsageToolLogItem {
                 id: row.get(0)?,
-                run_id: row.get(1)?,
+                turn_id: row.get(1)?,
                 session_id: row.get(2)?,
                 tool_name: row.get(3)?,
                 tool_action: row.get(4)?,
@@ -539,17 +571,17 @@ impl StorageService {
         })?;
         let tools = rows.collect::<Result<Vec<_>, _>>()?;
         Ok(UsageLogDetailPayload {
-            run_id: req.run_id,
+            turn_id: req.turn_id,
             tools,
         })
     }
 
-    fn is_run_detail_logging_enabled(&self, run_id: &str) -> AppResult<bool> {
+    fn is_turn_detail_logging_enabled(&self, turn_id: &str) -> AppResult<bool> {
         let conn = self.open_connection()?;
         let value = conn
             .query_row(
-                "SELECT detail_logged FROM run_usage_metrics WHERE run_id = ?1",
-                [run_id],
+                "SELECT detail_logged FROM turn_usage_metrics WHERE turn_id = ?1",
+                [turn_id],
                 |row| row.get::<_, i64>(0),
             )
             .optional()?;
@@ -585,9 +617,9 @@ fn usage_range_start(range: &str) -> AppResult<Option<String>> {
     Ok(start.map(|value| value.to_rfc3339_opts(SecondsFormat::Nanos, true)))
 }
 
-fn build_run_usage_where_clause(
+fn build_turn_usage_where_clause(
     range: &str,
-    model_id: Option<&str>,
+    provider_profile_id: Option<&str>,
     status: Option<&str>,
     detail_logged: Option<bool>,
 ) -> AppResult<(String, Vec<SqlValue>)> {
@@ -598,9 +630,9 @@ fn build_run_usage_where_clause(
         clauses.push("started_at >= ?".to_string());
         params.push(SqlValue::Text(start_at));
     }
-    if let Some(model_id) = model_id.filter(|value| !value.trim().is_empty()) {
-        clauses.push("model_id = ?".to_string());
-        params.push(SqlValue::Text(model_id.to_string()));
+    if let Some(profile_id) = provider_profile_id.filter(|value| !value.trim().is_empty()) {
+        clauses.push("provider_profile_id = ?".to_string());
+        params.push(SqlValue::Text(profile_id.to_string()));
     }
     if let Some(status) = status.filter(|value| !value.trim().is_empty()) {
         clauses.push("status = ?".to_string());

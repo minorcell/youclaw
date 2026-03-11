@@ -16,10 +16,10 @@ use serde_json::Value;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     flatten_provider_profiles, message_from_record, migrate_provider_accounts_from_legacy,
-    normalize_provider_accounts, now_timestamp, AgentActiveHoursConfig, AgentConfigPayload,
-    AgentConfigUpdateRequest, BootstrapPayload, ChatMessage, ChatRun, ChatSession,
+    normalize_provider_accounts, now_timestamp, AgentConfigPayload,
+    AgentConfigUpdateRequest, BootstrapPayload, ChatMessage, ChatTurn, ChatSession,
     MemoryReindexPayload, MemorySearchHit, MemorySearchPayload, MessageRole, ProviderAccount,
-    ProviderProfile, RunStatus, SessionsChangedPayload, StoredProviders, ToolApproval,
+    ProviderProfile, TurnStatus, SessionsChangedPayload, StoredProviders, ToolApproval,
     UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,
     UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
     UsageProviderStatsItem, UsageProviderStatsPayload, UsageSettingsPayload, UsageStatsListRequest,
@@ -56,7 +56,7 @@ pub struct MemoryChunkInput {
 impl StorageService {
     pub fn new(base_dir: PathBuf) -> AppResult<Self> {
         let inner = Arc::new(StorageInner {
-            db_path: base_dir.join("app.sqlite"),
+            db_path: base_dir.join("app_v2.sqlite"),
             providers_path: base_dir.join("providers.json"),
             base_dir,
             providers_lock: Mutex::new(()),
@@ -78,7 +78,7 @@ impl StorageService {
             sessions: self.list_sessions()?,
             messages: self.list_messages()?,
             approvals: self.list_approvals()?,
-            runs: self.list_runs()?,
+            turns: self.list_turns()?,
             last_opened_session_id: self.get_last_opened_session_id()?,
             agent_config: self.get_agent_config()?,
             workspace_files: Vec::new(),
@@ -89,9 +89,7 @@ impl StorageService {
         let conn = self.open_connection()?;
         let config = conn.query_row(
             "SELECT
-                max_steps, max_input_tokens, compact_ratio, keep_recent, language,
-                heartbeat_enabled, heartbeat_every, heartbeat_target,
-                heartbeat_active_start, heartbeat_active_end
+                max_steps, max_input_tokens, compact_ratio, keep_recent, language
              FROM agent_settings
              WHERE id = 1",
             [],
@@ -101,26 +99,12 @@ impl StorageService {
                 let compact_ratio = row.get::<_, f64>(2)?.clamp(0.1, 0.95) as f32;
                 let keep_recent = row.get::<_, i64>(3)?.clamp(1, 128) as u32;
                 let language = normalize_language(row.get::<_, String>(4)?);
-                let heartbeat_enabled = row.get::<_, i64>(5)? != 0;
-                let heartbeat_every = row.get::<_, String>(6)?;
-                let heartbeat_target = row.get::<_, String>(7)?;
-                let active_start = row.get::<_, Option<String>>(8)?;
-                let active_end = row.get::<_, Option<String>>(9)?;
                 Ok(AgentConfigPayload {
                     max_steps,
                     max_input_tokens,
                     compact_ratio,
                     keep_recent,
                     language,
-                    heartbeat: crate::backend::models::AgentHeartbeatConfig {
-                        enabled: heartbeat_enabled,
-                        every: heartbeat_every,
-                        target: heartbeat_target,
-                        active_hours: match (active_start, active_end) {
-                            (Some(start), Some(end)) => Some(AgentActiveHoursConfig { start, end }),
-                            _ => None,
-                        },
-                    },
                 })
             },
         )?;
@@ -148,16 +132,6 @@ impl StorageService {
         if let Some(value) = req.language {
             current.language = normalize_language(value);
         }
-        if let Some(value) = req.heartbeat {
-            current.heartbeat.enabled = value.enabled;
-            if !value.every.trim().is_empty() {
-                current.heartbeat.every = value.every;
-            }
-            if !value.target.trim().is_empty() {
-                current.heartbeat.target = value.target;
-            }
-            current.heartbeat.active_hours = value.active_hours;
-        }
 
         let conn = self.open_connection()?;
         conn.execute(
@@ -167,12 +141,7 @@ impl StorageService {
                  compact_ratio = ?4,
                  keep_recent = ?5,
                  language = ?6,
-                 heartbeat_enabled = ?7,
-                 heartbeat_every = ?8,
-                 heartbeat_target = ?9,
-                 heartbeat_active_start = ?10,
-                 heartbeat_active_end = ?11,
-                 updated_at = ?12
+                 updated_at = ?7
              WHERE id = ?1",
             params![
                 1i64,
@@ -181,23 +150,6 @@ impl StorageService {
                 current.compact_ratio as f64,
                 current.keep_recent as i64,
                 current.language,
-                if current.heartbeat.enabled {
-                    1i64
-                } else {
-                    0i64
-                },
-                current.heartbeat.every,
-                current.heartbeat.target,
-                current
-                    .heartbeat
-                    .active_hours
-                    .as_ref()
-                    .map(|item| item.start.clone()),
-                current
-                    .heartbeat
-                    .active_hours
-                    .as_ref()
-                    .map(|item| item.end.clone()),
                 now_timestamp(),
             ],
         )?;

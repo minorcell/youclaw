@@ -1,12 +1,13 @@
 use super::*;
+use aquaregia::AgentStep;
 
 impl StorageService {
     pub fn list_sessions(&self) -> AppResult<Vec<ChatSession>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, provider_profile_id, created_at, updated_at, last_run_at
+            "SELECT id, title, provider_profile_id, created_at, updated_at, last_turn_at
              FROM chat_sessions
-             ORDER BY COALESCE(last_run_at, updated_at) DESC, created_at DESC",
+             ORDER BY COALESCE(last_turn_at, updated_at) DESC, created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(ChatSession {
@@ -15,7 +16,7 @@ impl StorageService {
                 provider_profile_id: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
-                last_run_at: row.get(5)?,
+                last_turn_at: row.get(5)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -24,7 +25,7 @@ impl StorageService {
     pub fn get_session(&self, session_id: &str) -> AppResult<ChatSession> {
         let conn = self.open_connection()?;
         conn.query_row(
-            "SELECT id, title, provider_profile_id, created_at, updated_at, last_run_at
+            "SELECT id, title, provider_profile_id, created_at, updated_at, last_turn_at
              FROM chat_sessions WHERE id = ?1",
             [session_id],
             |row| {
@@ -34,7 +35,7 @@ impl StorageService {
                     provider_profile_id: row.get(2)?,
                     created_at: row.get(3)?,
                     updated_at: row.get(4)?,
-                    last_run_at: row.get(5)?,
+                    last_turn_at: row.get(5)?,
                 })
             },
         )
@@ -45,7 +46,7 @@ impl StorageService {
     pub fn insert_session(&self, session: &ChatSession) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO chat_sessions (id, title, provider_profile_id, created_at, updated_at, last_run_at)
+            "INSERT INTO chat_sessions (id, title, provider_profile_id, created_at, updated_at, last_turn_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 session.id,
@@ -53,7 +54,7 @@ impl StorageService {
                 session.provider_profile_id,
                 session.created_at,
                 session.updated_at,
-                session.last_run_at,
+                session.last_turn_at,
             ],
         )?;
         Ok(())
@@ -81,17 +82,29 @@ impl StorageService {
         Ok(())
     }
 
-    pub fn touch_session_for_run(&self, session_id: &str, title: Option<&str>) -> AppResult<()> {
+    pub fn update_session_title(&self, session_id: &str, title: &str) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        let updated = conn.execute(
+            "UPDATE chat_sessions SET title = ?2, updated_at = ?3 WHERE id = ?1",
+            params![session_id, title, now_timestamp()],
+        )?;
+        if updated == 0 {
+            return Err(AppError::NotFound(format!("session `{session_id}`")));
+        }
+        Ok(())
+    }
+
+    pub fn touch_session_for_turn(&self, session_id: &str, title: Option<&str>) -> AppResult<()> {
         let conn = self.open_connection()?;
         let now = now_timestamp();
         if let Some(title) = title {
             conn.execute(
-                "UPDATE chat_sessions SET title = ?2, updated_at = ?3, last_run_at = ?3 WHERE id = ?1",
+                "UPDATE chat_sessions SET title = ?2, updated_at = ?3, last_turn_at = ?3 WHERE id = ?1",
                 params![session_id, title, now],
             )?;
         } else {
             conn.execute(
-                "UPDATE chat_sessions SET updated_at = ?2, last_run_at = ?2 WHERE id = ?1",
+                "UPDATE chat_sessions SET updated_at = ?2, last_turn_at = ?2 WHERE id = ?1",
                 params![session_id, now],
             )?;
         }
@@ -113,17 +126,18 @@ impl StorageService {
             "DELETE FROM chat_messages WHERE session_id = ?1",
             [session_id],
         )?;
+        conn.execute("DELETE FROM chat_steps WHERE session_id = ?1", [session_id])?;
         conn.execute(
             "DELETE FROM tool_approvals WHERE session_id = ?1",
             [session_id],
         )?;
-        conn.execute("DELETE FROM chat_runs WHERE session_id = ?1", [session_id])?;
+        conn.execute("DELETE FROM chat_turns WHERE session_id = ?1", [session_id])?;
         conn.execute(
-            "DELETE FROM run_usage_metrics WHERE session_id = ?1",
+            "DELETE FROM turn_usage_metrics WHERE session_id = ?1",
             [session_id],
         )?;
         conn.execute(
-            "DELETE FROM run_tool_metrics WHERE session_id = ?1",
+            "DELETE FROM turn_tool_metrics WHERE session_id = ?1",
             [session_id],
         )?;
         conn.execute(
@@ -146,7 +160,7 @@ impl StorageService {
     pub fn list_messages(&self) -> AppResult<Vec<ChatMessage>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, parts_json, run_id, created_at
+            "SELECT id, session_id, role, parts_json, turn_id, created_at
              FROM chat_messages
              ORDER BY created_at ASC, rowid ASC",
         )?;
@@ -158,7 +172,7 @@ impl StorageService {
                 session_id: row.get(1)?,
                 role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
-                run_id: row.get(4)?,
+                turn_id: row.get(4)?,
                 created_at: row.get(5)?,
             })
         })?;
@@ -168,7 +182,7 @@ impl StorageService {
     pub fn list_messages_for_session(&self, session_id: &str) -> AppResult<Vec<ChatMessage>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, parts_json, run_id, created_at
+            "SELECT id, session_id, role, parts_json, turn_id, created_at
              FROM chat_messages
              WHERE session_id = ?1
              ORDER BY created_at ASC, rowid ASC",
@@ -181,7 +195,7 @@ impl StorageService {
                 session_id: row.get(1)?,
                 role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
-                run_id: row.get(4)?,
+                turn_id: row.get(4)?,
                 created_at: row.get(5)?,
             })
         })?;
@@ -194,7 +208,7 @@ impl StorageService {
     ) -> AppResult<Vec<ChatMessage>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT m.id, m.session_id, m.role, m.parts_json, m.run_id, m.created_at
+            "SELECT m.id, m.session_id, m.role, m.parts_json, m.turn_id, m.created_at
              FROM chat_messages m
              LEFT JOIN message_marks mm
                ON mm.message_id = m.id AND mm.mark = 'compressed'
@@ -210,7 +224,7 @@ impl StorageService {
                 session_id: row.get(1)?,
                 role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
-                run_id: row.get(4)?,
+                turn_id: row.get(4)?,
                 created_at: row.get(5)?,
             })
         })?;
@@ -296,15 +310,15 @@ impl StorageService {
         Ok(())
     }
 
-    pub fn list_messages_for_run(&self, run_id: &str) -> AppResult<Vec<ChatMessage>> {
+    pub fn list_messages_for_turn(&self, turn_id: &str) -> AppResult<Vec<ChatMessage>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, parts_json, run_id, created_at
+            "SELECT id, session_id, role, parts_json, turn_id, created_at
              FROM chat_messages
-             WHERE run_id = ?1
+             WHERE turn_id = ?1
              ORDER BY created_at ASC, rowid ASC",
         )?;
-        let rows = stmt.query_map([run_id], |row| {
+        let rows = stmt.query_map([turn_id], |row| {
             let parts_json = row.get::<_, String>(3)?;
             let role_raw = row.get::<_, String>(2)?;
             Ok(ChatMessage {
@@ -312,11 +326,97 @@ impl StorageService {
                 session_id: row.get(1)?,
                 role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
-                run_id: row.get(4)?,
+                turn_id: row.get(4)?,
                 created_at: row.get(5)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_turn_steps(&self, turn_id: &str) -> AppResult<Vec<AgentStep>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT
+                step,
+                output_text,
+                reasoning_text,
+                reasoning_parts_json,
+                finish_reason_json,
+                usage_json,
+                tool_calls_json,
+                tool_results_json
+             FROM chat_steps
+             WHERE turn_id = ?1
+             ORDER BY step ASC",
+        )?;
+        let rows = stmt.query_map([turn_id], |row| {
+            let step_num = row.get::<_, i64>(0)? as u8;
+            let output_text = row.get::<_, String>(1)?;
+            let reasoning_text = row.get::<_, String>(2)?;
+            let reasoning_parts_json = row.get::<_, String>(3)?;
+            let finish_reason_json = row.get::<_, String>(4)?;
+            let usage_json = row.get::<_, String>(5)?;
+            let tool_calls_json = row.get::<_, String>(6)?;
+            let tool_results_json = row.get::<_, String>(7)?;
+            let reasoning_parts = serde_json::from_str(&reasoning_parts_json).unwrap_or_default();
+            let finish_reason = serde_json::from_str(&finish_reason_json)
+                .unwrap_or(aquaregia::FinishReason::Unknown("unknown".to_string()));
+            let usage = serde_json::from_str(&usage_json).unwrap_or_default();
+            let tool_calls = serde_json::from_str(&tool_calls_json).unwrap_or_default();
+            let tool_results = serde_json::from_str(&tool_results_json).unwrap_or_default();
+            Ok(AgentStep {
+                step: step_num,
+                output_text,
+                reasoning_text,
+                reasoning_parts,
+                finish_reason,
+                usage,
+                tool_calls,
+                tool_results,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn insert_turn_step(
+        &self,
+        turn_id: &str,
+        session_id: &str,
+        step: &AgentStep,
+    ) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "INSERT INTO chat_steps (
+                turn_id, session_id, step, output_text, reasoning_text,
+                reasoning_parts_json, finish_reason_json, usage_json,
+                tool_calls_json, tool_results_json, created_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(turn_id, step) DO UPDATE SET
+                session_id = excluded.session_id,
+                output_text = excluded.output_text,
+                reasoning_text = excluded.reasoning_text,
+                reasoning_parts_json = excluded.reasoning_parts_json,
+                finish_reason_json = excluded.finish_reason_json,
+                usage_json = excluded.usage_json,
+                tool_calls_json = excluded.tool_calls_json,
+                tool_results_json = excluded.tool_results_json,
+                created_at = excluded.created_at",
+            params![
+                turn_id,
+                session_id,
+                step.step as i64,
+                step.output_text,
+                step.reasoning_text,
+                serde_json::to_string(&step.reasoning_parts)?,
+                serde_json::to_string(&step.finish_reason)?,
+                serde_json::to_string(&step.usage)?,
+                serde_json::to_string(&step.tool_calls)?,
+                serde_json::to_string(&step.tool_results)?,
+                now_timestamp(),
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn insert_messages(&self, messages: &[ChatMessage]) -> AppResult<()> {
@@ -327,14 +427,14 @@ impl StorageService {
         let tx = conn.unchecked_transaction()?;
         for message in messages {
             tx.execute(
-                "INSERT INTO chat_messages (id, session_id, role, parts_json, run_id, created_at)
+                "INSERT INTO chat_messages (id, session_id, role, parts_json, turn_id, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     message.id,
                     message.session_id,
                     message.role.as_str(),
                     serde_json::to_string(&message.parts_json)?,
-                    message.run_id,
+                    message.turn_id,
                     message.created_at,
                 ],
             )?;
@@ -367,19 +467,19 @@ impl StorageService {
             .collect()
     }
 
-    pub fn list_runs(&self) -> AppResult<Vec<ChatRun>> {
+    pub fn list_turns(&self) -> AppResult<Vec<ChatTurn>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, session_id, status, user_message, output_text, created_at, finished_at, error_message
-             FROM chat_runs
+             FROM chat_turns
              ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             let status_raw = row.get::<_, String>(2)?;
-            Ok(ChatRun {
+            Ok(ChatTurn {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                status: parse_run_status_column(&status_raw, 2)?,
+                status: parse_turn_status_column(&status_raw, 2)?,
                 user_message: row.get(3)?,
                 output_text: row.get(4)?,
                 created_at: row.get(5)?,
@@ -390,50 +490,50 @@ impl StorageService {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn insert_run(&self, run: &ChatRun) -> AppResult<()> {
+    pub fn insert_turn(&self, turn: &ChatTurn) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO chat_runs (id, session_id, status, user_message, output_text, created_at, finished_at, error_message)
+            "INSERT INTO chat_turns (id, session_id, status, user_message, output_text, created_at, finished_at, error_message)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                run.id,
-                run.session_id,
-                run.status.as_str(),
-                run.user_message,
-                run.output_text,
-                run.created_at,
-                run.finished_at,
-                run.error_message,
+                turn.id,
+                turn.session_id,
+                turn.status.as_str(),
+                turn.user_message,
+                turn.output_text,
+                turn.created_at,
+                turn.finished_at,
+                turn.error_message,
             ],
         )?;
         Ok(())
     }
 
-    pub fn update_run(
+    pub fn update_turn(
         &self,
-        run_id: &str,
-        status: RunStatus,
+        turn_id: &str,
+        status: TurnStatus,
         output_text: Option<&str>,
         error_message: Option<&str>,
-    ) -> AppResult<ChatRun> {
+    ) -> AppResult<ChatTurn> {
         let conn = self.open_connection()?;
         let finished_at = now_timestamp();
         conn.execute(
-            "UPDATE chat_runs
+            "UPDATE chat_turns
              SET status = ?2, output_text = COALESCE(?3, output_text), error_message = ?4, finished_at = ?5
              WHERE id = ?1",
-            params![run_id, status.as_str(), output_text, error_message, finished_at],
+            params![turn_id, status.as_str(), output_text, error_message, finished_at],
         )?;
         conn.query_row(
             "SELECT id, session_id, status, user_message, output_text, created_at, finished_at, error_message
-             FROM chat_runs WHERE id = ?1",
-            [run_id],
+             FROM chat_turns WHERE id = ?1",
+            [turn_id],
             |row| {
                 let status_raw = row.get::<_, String>(2)?;
-                Ok(ChatRun {
+                Ok(ChatTurn {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
-                    status: parse_run_status_column(&status_raw, 2)?,
+                    status: parse_turn_status_column(&status_raw, 2)?,
                     user_message: row.get(3)?,
                     output_text: row.get(4)?,
                     created_at: row.get(5)?,
@@ -447,7 +547,7 @@ impl StorageService {
     pub fn list_approvals(&self) -> AppResult<Vec<ToolApproval>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, run_id, call_id, action, path, preview_json, status, created_at, resolved_at
+            "SELECT id, session_id, turn_id, call_id, action, path, preview_json, status, created_at, resolved_at
              FROM tool_approvals
              ORDER BY created_at DESC",
         )?;
@@ -456,7 +556,7 @@ impl StorageService {
             Ok(ToolApproval {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                run_id: row.get(2)?,
+                turn_id: row.get(2)?,
                 call_id: row.get(3)?,
                 action: row.get(4)?,
                 path: row.get(5)?,
@@ -472,12 +572,12 @@ impl StorageService {
     pub fn insert_approval(&self, approval: &ToolApproval) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO tool_approvals (id, session_id, run_id, call_id, action, path, preview_json, status, created_at, resolved_at)
+            "INSERT INTO tool_approvals (id, session_id, turn_id, call_id, action, path, preview_json, status, created_at, resolved_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 approval.id,
                 approval.session_id,
-                approval.run_id,
+                approval.turn_id,
                 approval.call_id,
                 approval.action,
                 approval.path,
@@ -506,7 +606,7 @@ impl StorageService {
             params![approval_id, status, resolved_at],
         )?;
         conn.query_row(
-            "SELECT id, session_id, run_id, call_id, action, path, preview_json, status, created_at, resolved_at
+            "SELECT id, session_id, turn_id, call_id, action, path, preview_json, status, created_at, resolved_at
              FROM tool_approvals WHERE id = ?1",
             [approval_id],
             |row| {
@@ -514,7 +614,7 @@ impl StorageService {
                 Ok(ToolApproval {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
-                    run_id: row.get(2)?,
+                    turn_id: row.get(2)?,
                     call_id: row.get(3)?,
                     action: row.get(4)?,
                     path: row.get(5)?,
@@ -532,7 +632,7 @@ impl StorageService {
     pub fn record_file_operation(
         &self,
         session_id: &str,
-        run_id: &str,
+        turn_id: &str,
         call_id: Option<&str>,
         action: &str,
         path: &str,
@@ -541,12 +641,12 @@ impl StorageService {
     ) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO file_operations (id, session_id, run_id, call_id, action, path, status, bytes_written, created_at)
+            "INSERT INTO file_operations (id, session_id, turn_id, call_id, action, path, status, bytes_written, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 uuid::Uuid::new_v4().to_string(),
                 session_id,
-                run_id,
+                turn_id,
                 call_id,
                 action,
                 path,
@@ -601,15 +701,15 @@ fn parse_message_role_column(value: &str, column: usize) -> rusqlite::Result<Mes
     })
 }
 
-fn parse_run_status_column(value: &str, column: usize) -> rusqlite::Result<RunStatus> {
-    value.parse::<RunStatus>().map_err(|_| {
+fn parse_turn_status_column(value: &str, column: usize) -> rusqlite::Result<TurnStatus> {
+    value.parse::<TurnStatus>().map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(
             column,
-            rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid run status `{value}`"),
-            )),
-        )
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid turn status `{value}`"),
+                )),
+            )
     })
 }

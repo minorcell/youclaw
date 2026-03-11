@@ -22,17 +22,17 @@ impl StorageService {
                 provider_profile_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                last_run_at TEXT
+                last_turn_at TEXT
             );
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 parts_json TEXT NOT NULL,
-                run_id TEXT,
+                turn_id TEXT,
                 created_at TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS chat_runs (
+            CREATE TABLE IF NOT EXISTS chat_turns (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -42,10 +42,24 @@ impl StorageService {
                 finished_at TEXT,
                 error_message TEXT
             );
+            CREATE TABLE IF NOT EXISTS chat_steps (
+                turn_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                step INTEGER NOT NULL,
+                output_text TEXT NOT NULL,
+                reasoning_text TEXT NOT NULL,
+                reasoning_parts_json TEXT NOT NULL,
+                finish_reason_json TEXT NOT NULL,
+                usage_json TEXT NOT NULL,
+                tool_calls_json TEXT NOT NULL,
+                tool_results_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (turn_id, step)
+            );
             CREATE TABLE IF NOT EXISTS tool_approvals (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
                 call_id TEXT NOT NULL,
                 action TEXT NOT NULL,
                 path TEXT NOT NULL,
@@ -57,7 +71,7 @@ impl StorageService {
             CREATE TABLE IF NOT EXISTS file_operations (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
                 call_id TEXT,
                 action TEXT NOT NULL,
                 path TEXT NOT NULL,
@@ -65,8 +79,8 @@ impl StorageService {
                 bytes_written INTEGER,
                 created_at TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS run_usage_metrics (
-                run_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS turn_usage_metrics (
+                turn_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 provider_profile_id TEXT,
                 provider_id TEXT,
@@ -79,6 +93,7 @@ impl StorageService {
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 duration_ms INTEGER,
+                step_count INTEGER NOT NULL DEFAULT 0,
                 detail_logged INTEGER NOT NULL DEFAULT 1,
                 input_tokens INTEGER NOT NULL DEFAULT 0,
                 input_no_cache_tokens INTEGER NOT NULL DEFAULT 0,
@@ -89,9 +104,9 @@ impl StorageService {
                 reasoning_tokens INTEGER NOT NULL DEFAULT 0,
                 total_tokens INTEGER NOT NULL DEFAULT 0
             );
-            CREATE TABLE IF NOT EXISTS run_tool_metrics (
+            CREATE TABLE IF NOT EXISTS turn_tool_metrics (
                 id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
                 tool_name TEXT NOT NULL,
                 tool_action TEXT,
@@ -107,11 +122,6 @@ impl StorageService {
                 compact_ratio REAL NOT NULL DEFAULT 0.7,
                 keep_recent INTEGER NOT NULL DEFAULT 8,
                 language TEXT NOT NULL DEFAULT 'zh',
-                heartbeat_enabled INTEGER NOT NULL DEFAULT 0,
-                heartbeat_every TEXT NOT NULL DEFAULT '30m',
-                heartbeat_target TEXT NOT NULL DEFAULT 'main',
-                heartbeat_active_start TEXT,
-                heartbeat_active_end TEXT,
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS session_memory_state (
@@ -140,16 +150,18 @@ impl StorageService {
                 heading,
                 content
             );
-            CREATE INDEX IF NOT EXISTS idx_run_usage_metrics_started_at
-            ON run_usage_metrics (started_at DESC, run_id DESC);
-            CREATE INDEX IF NOT EXISTS idx_run_usage_metrics_model
-            ON run_usage_metrics (model_id, started_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_run_usage_metrics_status
-            ON run_usage_metrics (status, started_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_run_tool_metrics_run
-            ON run_tool_metrics (run_id, created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_run_tool_metrics_tool
-            ON run_tool_metrics (tool_name, tool_action, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_turn_usage_metrics_started_at
+            ON turn_usage_metrics (started_at DESC, turn_id DESC);
+            CREATE INDEX IF NOT EXISTS idx_turn_usage_metrics_model
+            ON turn_usage_metrics (model_id, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_turn_usage_metrics_status
+            ON turn_usage_metrics (status, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_turn_tool_metrics_turn
+            ON turn_tool_metrics (turn_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_turn_tool_metrics_tool
+            ON turn_tool_metrics (tool_name, tool_action, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_chat_steps_turn
+            ON chat_steps (turn_id, step);
             CREATE INDEX IF NOT EXISTS idx_message_marks_mark
             ON message_marks (mark, message_id);
             CREATE INDEX IF NOT EXISTS idx_memory_chunks_path
@@ -159,9 +171,8 @@ impl StorageService {
         conn.execute(
             "INSERT OR IGNORE INTO agent_settings (
                 id, max_steps, max_input_tokens, compact_ratio, keep_recent,
-                language, heartbeat_enabled, heartbeat_every, heartbeat_target,
-                heartbeat_active_start, heartbeat_active_end, updated_at
-             ) VALUES (1, 8, 32768, 0.7, 8, 'zh', 0, '30m', 'main', NULL, NULL, ?1)",
+                language, updated_at
+             ) VALUES (1, 8, 32768, 0.7, 8, 'zh', ?1)",
             [now_timestamp()],
         )?;
         Ok(())

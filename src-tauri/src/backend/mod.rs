@@ -45,13 +45,13 @@ impl WsHub {
         Ok(())
     }
 
-    pub fn emit_run_event(
+    pub fn emit_turn_event(
         &self,
-        run_id: &str,
+        turn_id: &str,
         name: &str,
         payload: impl Serialize,
     ) -> AppResult<()> {
-        let envelope = WsEnvelope::event_for_run(run_id, name, payload)?;
+        let envelope = WsEnvelope::event_for_turn(turn_id, name, payload)?;
         let _ = self.sender.send(envelope);
         Ok(())
     }
@@ -110,7 +110,7 @@ pub struct BackendState {
     pub(crate) workspace: AgentWorkspace,
     pub(crate) ws_hub: WsHub,
     pub(crate) approvals: ApprovalService,
-    active_runs: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    active_turns: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl BackendState {
@@ -127,7 +127,7 @@ impl BackendState {
             workspace,
             ws_hub,
             approvals,
-            active_runs: Arc::new(Mutex::new(HashMap::new())),
+            active_turns: Arc::new(Mutex::new(HashMap::new())),
         };
         let _ = state.reindex_memory();
         Ok(state)
@@ -163,31 +163,31 @@ impl BackendState {
             .emit("sessions.changed", self.storage.sessions_payload()?)
     }
 
-    pub fn register_run(&self, run_id: String) {
-        if let Ok(mut runs) = self.active_runs.lock() {
-            runs.insert(run_id, CancellationToken::new());
+    pub fn register_turn(&self, turn_id: String) {
+        if let Ok(mut turns) = self.active_turns.lock() {
+            turns.insert(turn_id, CancellationToken::new());
         }
     }
 
-    pub fn unregister_run(&self, run_id: &str) {
-        if let Ok(mut runs) = self.active_runs.lock() {
-            runs.remove(run_id);
+    pub fn unregister_turn(&self, turn_id: &str) {
+        if let Ok(mut turns) = self.active_turns.lock() {
+            turns.remove(turn_id);
         }
     }
 
-    pub fn get_run_token(&self, run_id: &str) -> Option<CancellationToken> {
-        self.active_runs
+    pub fn get_turn_token(&self, turn_id: &str) -> Option<CancellationToken> {
+        self.active_turns
             .lock()
             .ok()
-            .and_then(|runs| runs.get(run_id).cloned())
+            .and_then(|turns| turns.get(turn_id).cloned())
     }
 
-    pub fn cancel_run(&self, run_id: &str) -> AppResult<bool> {
+    pub fn cancel_turn(&self, turn_id: &str) -> AppResult<bool> {
         let maybe = self
-            .active_runs
+            .active_turns
             .lock()
-            .map_err(|_| AppError::Storage("run token lock poisoned".to_string()))?
-            .get(run_id)
+            .map_err(|_| AppError::Storage("turn token lock poisoned".to_string()))?
+            .get(turn_id)
             .cloned();
         if let Some(token) = maybe {
             token.cancel();

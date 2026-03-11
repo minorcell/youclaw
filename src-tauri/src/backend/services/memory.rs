@@ -1,6 +1,18 @@
 use super::super::*;
 use std::fs;
 
+use chrono::Local;
+
+/// `memory/today` → `memory/YYYY-MM-DD.md`（使用本地时间）。
+fn resolve_memory_path(path: &str) -> String {
+    if path.trim_end_matches('/') == "memory/today" || path.trim() == "today" {
+        let today = Local::now().format("%Y-%m-%d");
+        format!("memory/{today}.md")
+    } else {
+        path.to_string()
+    }
+}
+
 impl BackendState {
     pub fn memory_search(&self, req: MemorySearchRequest) -> AppResult<MemorySearchPayload> {
         self.storage.memory_search(
@@ -11,7 +23,8 @@ impl BackendState {
     }
 
     pub fn memory_get(&self, req: MemoryGetRequest) -> AppResult<MemoryGetPayload> {
-        let full = self.workspace.read_memory_file(&req.path)?;
+        let resolved = resolve_memory_path(&req.path);
+        let full = self.workspace.read_memory_file(&resolved)?;
         let lines = full.lines().collect::<Vec<_>>();
         let total_lines = lines.len() as u32;
         let offset = req.offset.unwrap_or(0) as usize;
@@ -21,7 +34,7 @@ impl BackendState {
         let content = lines[start..end].join("\n");
 
         Ok(MemoryGetPayload {
-            path: req.path,
+            path: resolved,
             line_start: start as u32 + 1,
             line_end: end as u32,
             total_lines,

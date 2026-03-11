@@ -6,7 +6,7 @@ use std::time::Instant;
 use aquaregia::tool::{Tool, ToolExecError};
 use aquaregia::{
     AgentStep, ContentPart, ErrorCode, FinishReason, GenerateTextRequest, LlmClient, Message,
-    MessageRole, ReasoningPart, StreamEvent, ToolCall, ToolResult, Usage,
+    MessageRole, ReasoningPart, StreamEvent, TextStream, ToolCall, ToolResult, Usage,
 };
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -21,8 +21,8 @@ use crate::backend::agents::tools::{
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     now_timestamp, record_from_message, title_from_first_prompt, AgentMemoryCompactedPayload,
-    ChatMessage, ChatRun, ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload,
-    RunCancelledPayload, RunFailedPayload, RunFinishedPayload, RunStartedPayload, RunStatus,
+    ChatMessage, ChatTurn, ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload,
+    TurnCancelledPayload, TurnFailedPayload, TurnFinishedPayload, TurnStartedPayload, TurnStatus,
     StepFinishedPayload, StepStartedPayload, TokenPayload, ToolFinishedPayload,
     ToolRequestedPayload,
 };
@@ -34,49 +34,49 @@ const SUMMARY_CHAR_LIMIT: usize = 16_000;
 const SUMMARY_MARKER: &str = "[previous-summary]";
 const STEP_SUMMARY_MARKER: &str = "[step-summary]";
 
-pub fn spawn_run(state: BackendState, run: ChatRun) {
+pub fn spawn_turn(state: BackendState, turn: ChatTurn) {
     tokio::spawn(async move {
-        let run_id = run.id.clone();
-        let session_id = run.session_id.clone();
-        let result = execute_run(state.clone(), run).await;
+        let turn_id = turn.id.clone();
+        let session_id = turn.session_id.clone();
+        let result = execute_turn(state.clone(), turn).await;
         if let Err(err) = result {
-            if let Ok(updated_run) =
+            if let Ok(updated_turn) =
                 state
                     .storage
-                    .update_run(&run_id, err_status(&err), None, Some(&err.message()))
+                    .update_turn(&turn_id, err_status(&err), None, Some(&err.message()))
             {
-                let _ = state.storage.update_run_usage_metric(&updated_run, None);
+                let _ = state.storage.update_turn_usage_metric(&updated_turn, None, None);
             }
             let payload = if matches!(err, AppError::Cancelled(_)) {
-                serde_json::to_value(RunCancelledPayload {
+                serde_json::to_value(TurnCancelledPayload {
                     session_id,
-                    run_id: run_id.clone(),
+                    turn_id: turn_id.clone(),
                 })
                 .unwrap_or_default()
             } else {
-                serde_json::to_value(RunFailedPayload {
+                serde_json::to_value(TurnFailedPayload {
                     session_id,
-                    run_id: run_id.clone(),
+                    turn_id: turn_id.clone(),
                     error: err.message(),
                 })
                 .unwrap_or_default()
             };
-            let _ = state.ws_hub.emit_run_event(
-                &run_id,
+            let _ = state.ws_hub.emit_turn_event(
+                &turn_id,
                 if matches!(err, AppError::Cancelled(_)) {
-                    "chat.run.cancelled"
+                    "chat.turn.cancelled"
                 } else {
-                    "chat.run.failed"
+                    "chat.turn.failed"
                 },
                 payload,
             );
         }
-        state.unregister_run(&run_id);
+        state.unregister_turn(&turn_id);
     });
 }
 
-async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
-    let session = state.storage.get_session(&run.session_id)?;
+async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
+    let session = state.storage.get_session(&turn.session_id)?;
     let provider_id = session
         .provider_profile_id
         .clone()
@@ -100,8 +100,8 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
         builder.build()?
     };
 
-    let _ = maybe_compact_session_context(&state, &run.session_id, &provider.model, false)?;
-    let mut messages = build_run_messages(&state, &run.session_id)?;
+    let _ = maybe_compact_session_context(&state, &turn.session_id, &provider.model, false)?;
+    let mut messages = build_turn_messages(&state, &turn.session_id)?;
     let bootstrap_guidance = if state.workspace.should_bootstrap() {
         let guidance = state.workspace.build_bootstrap_guidance(&config.language);
         state.workspace.mark_bootstrap_completed()?;
@@ -116,12 +116,12 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
     let current_step = Arc::new(AtomicU8::new(0));
     let tool_calls = Arc::new(Mutex::new(VecDeque::new()));
     let token = state
-        .get_run_token(&run.id)
-        .ok_or_else(|| AppError::Cancelled("run token missing".to_string()))?;
+        .get_turn_token(&turn.id)
+        .ok_or_else(|| AppError::Cancelled("turn token missing".to_string()))?;
 
     let filesystem_context = FilesystemToolContext {
-        session_id: run.session_id.clone(),
-        run_id: run.id.clone(),
+        session_id: turn.session_id.clone(),
+        turn_id: turn.id.clone(),
         workspace_root: state.workspace.root().to_path_buf(),
         current_step: Arc::clone(&current_step),
         tool_calls: Arc::clone(&tool_calls),
@@ -155,9 +155,9 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
         .collect::<Vec<_>>();
 
     let mut usage_total = Usage::default();
-    let mut step_results = Vec::new();
     let mut new_persisted_messages = Vec::<ChatMessage>::new();
     let mut final_output = String::new();
+    let mut completed_step_count = 0u32;
     let mut finished = false;
 
     for step in 1..=max_steps {
@@ -166,10 +166,10 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
         let estimated_tokens = estimate_tokens_for_messages(&messages, &provider.model);
         if estimated_tokens > compact_threshold {
             if step == 1 {
-                if maybe_compact_session_context(&state, &run.session_id, &provider.model, true)?
+                if maybe_compact_session_context(&state, &turn.session_id, &provider.model, true)?
                     .is_some()
                 {
-                    messages = build_run_messages(&state, &run.session_id)?;
+                    messages = build_turn_messages(&state, &turn.session_id)?;
                     if let Some(guidance) = bootstrap_guidance.as_deref() {
                         inject_bootstrap_guidance(&mut messages, guidance);
                     }
@@ -179,12 +179,12 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
             }
         }
 
-        state.ws_hub.emit_run_event(
-            &run.id,
+        state.ws_hub.emit_turn_event(
+            &turn.id,
             "chat.step.started",
             StepStartedPayload {
-                session_id: run.session_id.clone(),
-                run_id: run.id.clone(),
+                session_id: turn.session_id.clone(),
+                turn_id: turn.id.clone(),
                 step,
             },
         )?;
@@ -198,7 +198,7 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
             .build()
             .map_err(|err| AppError::Agent(err.to_string()))?;
 
-        let mut stream = match client.stream(request).await {
+        let stream = match client.stream(request).await {
             Ok(stream) => stream,
             Err(err) if err.code == ErrorCode::Cancelled => {
                 return Err(AppError::Cancelled(err.message));
@@ -206,291 +206,68 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
             Err(err) => return Err(err.into()),
         };
 
-        let mut step_text = String::new();
-        let mut step_reasoning_text = String::new();
-        let mut step_reasoning_parts = Vec::<ReasoningPart>::new();
-        let mut reasoning_part_index_by_block = HashMap::<String, usize>::new();
-        let mut step_usage = Usage::default();
-        let mut step_tool_calls = Vec::<ToolCall>::new();
+        let step_output = collect_step_stream(&state, &turn, step, stream, &tool_calls).await?;
+        usage_total += step_output.usage.clone();
 
-        while let Some(event) = stream.next().await {
-            let event = match event {
-                Ok(event) => event,
-                Err(err) if err.code == ErrorCode::Cancelled => {
-                    return Err(AppError::Cancelled(err.message));
-                }
-                Err(err) => return Err(err.into()),
-            };
-
-            match event {
-                StreamEvent::ReasoningStarted {
-                    block_id,
-                    provider_metadata,
-                } => {
-                    let block_id_for_map = block_id.clone();
-                    let part_index = step_reasoning_parts.len();
-                    step_reasoning_parts.push(ReasoningPart {
-                        text: String::new(),
-                        provider_metadata: provider_metadata.clone(),
-                    });
-                    reasoning_part_index_by_block.insert(block_id_for_map, part_index);
-                    state.ws_hub.emit_run_event(
-                        &run.id,
-                        "chat.reasoning.started",
-                        ReasoningStartedPayload {
-                            session_id: run.session_id.clone(),
-                            run_id: run.id.clone(),
-                            step,
-                            block_id,
-                            provider_metadata,
-                        },
-                    )?;
-                }
-                StreamEvent::ReasoningDelta {
-                    block_id,
-                    text,
-                    provider_metadata,
-                } => {
-                    if !text.is_empty() {
-                        step_reasoning_text.push_str(&text);
-                    }
-                    if let Some(index) = reasoning_part_index_by_block.get(&block_id).copied() {
-                        if let Some(part) = step_reasoning_parts.get_mut(index) {
-                            if !text.is_empty() {
-                                part.text.push_str(&text);
-                            }
-                            if provider_metadata.is_some() {
-                                part.provider_metadata = provider_metadata.clone();
-                            }
-                        }
-                    } else {
-                        let part_index = step_reasoning_parts.len();
-                        step_reasoning_parts.push(ReasoningPart {
-                            text: text.clone(),
-                            provider_metadata: provider_metadata.clone(),
-                        });
-                        reasoning_part_index_by_block.insert(block_id.clone(), part_index);
-                    }
-                    state.ws_hub.emit_run_event(
-                        &run.id,
-                        "chat.reasoning.token",
-                        ReasoningTokenPayload {
-                            session_id: run.session_id.clone(),
-                            run_id: run.id.clone(),
-                            step,
-                            block_id,
-                            text,
-                            provider_metadata,
-                        },
-                    )?;
-                }
-                StreamEvent::ReasoningDone {
-                    block_id,
-                    provider_metadata,
-                } => {
-                    if let Some(index) = reasoning_part_index_by_block.remove(&block_id) {
-                        if let Some(part) = step_reasoning_parts.get_mut(index) {
-                            if provider_metadata.is_some() {
-                                part.provider_metadata = provider_metadata.clone();
-                            }
-                        }
-                    }
-                    state.ws_hub.emit_run_event(
-                        &run.id,
-                        "chat.reasoning.finished",
-                        ReasoningFinishedPayload {
-                            session_id: run.session_id.clone(),
-                            run_id: run.id.clone(),
-                            step,
-                            block_id,
-                            provider_metadata,
-                        },
-                    )?;
-                }
-                StreamEvent::TextDelta { text } => {
-                    if !text.is_empty() {
-                        step_text.push_str(&text);
-                        state.ws_hub.emit_run_event(
-                            &run.id,
-                            "chat.token",
-                            TokenPayload {
-                                session_id: run.session_id.clone(),
-                                run_id: run.id.clone(),
-                                step,
-                                text,
-                            },
-                        )?;
-                    }
-                }
-                StreamEvent::ToolCallReady { call } => {
-                    if matches!(
-                        call.tool_name.as_str(),
-                        FILESYSTEM_LIST_DIR_TOOL_NAME
-                            | FILESYSTEM_READ_FILE_TOOL_NAME
-                            | FILESYSTEM_WRITE_FILE_TOOL_NAME
-                    ) {
-                        if let Ok(mut queue) = tool_calls.lock() {
-                            queue.push_back(call.clone());
-                        }
-                    }
-                    step_tool_calls.push(call.clone());
-                    state.ws_hub.emit_run_event(
-                        &run.id,
-                        "chat.tool.requested",
-                        ToolRequestedPayload {
-                            session_id: run.session_id.clone(),
-                            run_id: run.id.clone(),
-                            step,
-                            state: "started".to_string(),
-                            tool_call: call,
-                            approval: None,
-                        },
-                    )?;
-                }
-                StreamEvent::Usage { usage } => {
-                    step_usage += usage;
-                }
-                StreamEvent::Done => break,
-            }
-        }
-
-        usage_total += step_usage.clone();
-
-        let assistant_message =
-            make_assistant_message(&step_reasoning_parts, &step_text, &step_tool_calls)?;
+        let assistant_message = make_assistant_message(
+            &step_output.reasoning_parts,
+            &step_output.text,
+            &step_output.tool_calls,
+        )?;
         let persisted_assistant =
-            record_from_message(&run.session_id, &run.id, &assistant_message)?;
+            record_from_message(&turn.session_id, &turn.id, &assistant_message)?;
         messages.push(assistant_message);
         new_persisted_messages.push(persisted_assistant);
 
-        if step_tool_calls.is_empty() {
+        if step_output.tool_calls.is_empty() {
             let step_state = AgentStep {
                 step,
-                output_text: step_text.clone(),
-                reasoning_text: step_reasoning_text.clone(),
-                reasoning_parts: step_reasoning_parts.clone(),
+                output_text: step_output.text.clone(),
+                reasoning_text: step_output.reasoning_text.clone(),
+                reasoning_parts: step_output.reasoning_parts.clone(),
                 finish_reason: FinishReason::Stop,
-                usage: step_usage,
+                usage: step_output.usage,
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
             };
-            state.ws_hub.emit_run_event(
-                &run.id,
-                "chat.step.finished",
-                StepFinishedPayload {
-                    session_id: run.session_id.clone(),
-                    run_id: run.id.clone(),
-                    step: step_state.clone(),
-                },
-            )?;
-            step_results.push(step_state);
-            final_output = step_text;
+            emit_step_finished(&state, &turn, &step_state)?;
+            completed_step_count += 1;
+            let _ =
+                state
+                    .storage
+                    .update_turn_usage_metric(&turn, Some(&usage_total), Some(completed_step_count));
+            final_output = step_output.text;
             finished = true;
             break;
         }
 
-        let mut tool_results = Vec::new();
-        for tool_call in &step_tool_calls {
-            let selected_tool = tool_map.get(&tool_call.tool_name);
-            let (tool_result, duration_ms) = if let Some(tool) = selected_tool {
-                execute_tool_call(tool, tool_call).await
-            } else {
-                (
-                    ToolResult {
-                        call_id: tool_call.call_id.clone(),
-                        output_json: json!({
-                            "error": format!("unknown tool `{}`", tool_call.tool_name),
-                        }),
-                        is_error: true,
-                    },
-                    0,
-                )
-            };
-            let tool_action = tool_call
-                .args_json
-                .get("action")
-                .and_then(|value| value.as_str())
-                .map(ToOwned::to_owned)
-                .or_else(|| filesystem_tool_action(&tool_call.tool_name).map(ToOwned::to_owned));
-            let _ = state.storage.record_run_tool_metric(
-                &run.id,
-                &run.session_id,
-                &tool_call.tool_name,
-                tool_action.as_deref(),
-                if tool_result.is_error { "error" } else { "ok" },
-                Some(duration_ms),
-                tool_result.is_error,
-            );
-
-            if tool_call.tool_name == "memory_write" {
-                let status = if tool_result.is_error { "error" } else { "ok" };
-                let path = tool_result
-                    .output_json
-                    .get("path")
-                    .and_then(|value| value.as_str())
-                    .or_else(|| {
-                        tool_call
-                            .args_json
-                            .get("path")
-                            .and_then(|value| value.as_str())
-                    })
-                    .unwrap_or("memory/unknown.md");
-                let bytes_written = tool_result
-                    .output_json
-                    .get("bytes_written")
-                    .and_then(|value| value.as_u64())
-                    .map(|value| value as usize);
-                let _ = state.storage.record_file_operation(
-                    &run.session_id,
-                    &run.id,
-                    Some(&tool_call.call_id),
-                    "memory_write",
-                    path,
-                    status,
-                    bytes_written,
-                );
-            }
-
-            state.ws_hub.emit_run_event(
-                &run.id,
-                "chat.tool.finished",
-                ToolFinishedPayload {
-                    session_id: run.session_id.clone(),
-                    run_id: run.id.clone(),
-                    step,
-                    tool_call: tool_call.clone(),
-                    tool_result: tool_result.clone(),
-                    duration_ms,
-                },
-            )?;
-            let tool_message = Message::tool_result(tool_result.clone());
-            let persisted_tool_message =
-                record_from_message(&run.session_id, &run.id, &tool_message)?;
-            messages.push(tool_message);
-            new_persisted_messages.push(persisted_tool_message);
-            tool_results.push(tool_result);
-        }
+        let tool_results = handle_tool_calls(
+            &state,
+            &turn,
+            step,
+            &step_output.tool_calls,
+            &tool_map,
+            &mut messages,
+            &mut new_persisted_messages,
+        )
+        .await?;
 
         let step_state = AgentStep {
             step,
-            output_text: step_text,
-            reasoning_text: step_reasoning_text,
-            reasoning_parts: step_reasoning_parts,
+            output_text: step_output.text,
+            reasoning_text: step_output.reasoning_text,
+            reasoning_parts: step_output.reasoning_parts,
             finish_reason: FinishReason::ToolCalls,
-            usage: step_usage,
-            tool_calls: step_tool_calls,
+            usage: step_output.usage,
+            tool_calls: step_output.tool_calls,
             tool_results,
         };
-        state.ws_hub.emit_run_event(
-            &run.id,
-            "chat.step.finished",
-            StepFinishedPayload {
-                session_id: run.session_id.clone(),
-                run_id: run.id.clone(),
-                step: step_state.clone(),
-            },
-        )?;
-        step_results.push(step_state);
+        emit_step_finished(&state, &turn, &step_state)?;
+        completed_step_count += 1;
+        let _ =
+            state
+                .storage
+                .update_turn_usage_metric(&turn, Some(&usage_total), Some(completed_step_count));
     }
 
     if !finished {
@@ -499,39 +276,337 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
         )));
     }
 
-    state.storage.insert_messages(&new_persisted_messages)?;
-    let run_messages = state.storage.list_messages_for_run(&run.id)?;
-    let finished_run =
+    finalize_turn(
+        &state,
+        &turn,
+        &session.title,
+        &new_persisted_messages,
+        &final_output,
+        &usage_total,
+        completed_step_count,
+    )
+}
+
+struct StepOutput {
+    text: String,
+    reasoning_text: String,
+    reasoning_parts: Vec<ReasoningPart>,
+    usage: Usage,
+    tool_calls: Vec<ToolCall>,
+}
+
+async fn collect_step_stream(
+    state: &BackendState,
+    turn: &ChatTurn,
+    step: u8,
+    mut stream: TextStream,
+    tool_calls: &Arc<Mutex<VecDeque<ToolCall>>>,
+) -> AppResult<StepOutput> {
+    let mut step_text = String::new();
+    let mut step_reasoning_text = String::new();
+    let mut step_reasoning_parts = Vec::<ReasoningPart>::new();
+    let mut reasoning_part_index_by_block = HashMap::<String, usize>::new();
+    let mut step_usage = Usage::default();
+    let mut step_tool_calls = Vec::<ToolCall>::new();
+
+    while let Some(event) = stream.next().await {
+        let event = match event {
+            Ok(event) => event,
+            Err(err) if err.code == ErrorCode::Cancelled => {
+                return Err(AppError::Cancelled(err.message));
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        match event {
+            StreamEvent::ReasoningStarted {
+                block_id,
+                provider_metadata,
+            } => {
+                let block_id_for_map = block_id.clone();
+                let part_index = step_reasoning_parts.len();
+                step_reasoning_parts.push(ReasoningPart {
+                    text: String::new(),
+                    provider_metadata: provider_metadata.clone(),
+                });
+                reasoning_part_index_by_block.insert(block_id_for_map, part_index);
+                state.ws_hub.emit_turn_event(
+                    &turn.id,
+                    "chat.step.reasoning.started",
+                    ReasoningStartedPayload {
+                        session_id: turn.session_id.clone(),
+                        turn_id: turn.id.clone(),
+                        step,
+                        block_id,
+                        provider_metadata,
+                    },
+                )?;
+            }
+            StreamEvent::ReasoningDelta {
+                block_id,
+                text,
+                provider_metadata,
+            } => {
+                if !text.is_empty() {
+                    step_reasoning_text.push_str(&text);
+                }
+                if let Some(index) = reasoning_part_index_by_block.get(&block_id).copied() {
+                    if let Some(part) = step_reasoning_parts.get_mut(index) {
+                        if !text.is_empty() {
+                            part.text.push_str(&text);
+                        }
+                        if provider_metadata.is_some() {
+                            part.provider_metadata = provider_metadata.clone();
+                        }
+                    }
+                } else {
+                    let part_index = step_reasoning_parts.len();
+                    step_reasoning_parts.push(ReasoningPart {
+                        text: text.clone(),
+                        provider_metadata: provider_metadata.clone(),
+                    });
+                    reasoning_part_index_by_block.insert(block_id.clone(), part_index);
+                }
+                state.ws_hub.emit_turn_event(
+                    &turn.id,
+                    "chat.step.reasoning.token",
+                    ReasoningTokenPayload {
+                        session_id: turn.session_id.clone(),
+                        turn_id: turn.id.clone(),
+                        step,
+                        block_id,
+                        text,
+                        provider_metadata,
+                    },
+                )?;
+            }
+            StreamEvent::ReasoningDone {
+                block_id,
+                provider_metadata,
+            } => {
+                if let Some(index) = reasoning_part_index_by_block.remove(&block_id) {
+                    if let Some(part) = step_reasoning_parts.get_mut(index) {
+                        if provider_metadata.is_some() {
+                            part.provider_metadata = provider_metadata.clone();
+                        }
+                    }
+                }
+                state.ws_hub.emit_turn_event(
+                    &turn.id,
+                    "chat.step.reasoning.finished",
+                    ReasoningFinishedPayload {
+                        session_id: turn.session_id.clone(),
+                        turn_id: turn.id.clone(),
+                        step,
+                        block_id,
+                        provider_metadata,
+                    },
+                )?;
+            }
+            StreamEvent::TextDelta { text } => {
+                if !text.is_empty() {
+                    step_text.push_str(&text);
+                    state.ws_hub.emit_turn_event(
+                        &turn.id,
+                        "chat.step.token",
+                        TokenPayload {
+                            session_id: turn.session_id.clone(),
+                            turn_id: turn.id.clone(),
+                            step,
+                            text,
+                        },
+                    )?;
+                }
+            }
+            StreamEvent::ToolCallReady { call } => {
+                if matches!(
+                    call.tool_name.as_str(),
+                    FILESYSTEM_LIST_DIR_TOOL_NAME
+                        | FILESYSTEM_READ_FILE_TOOL_NAME
+                        | FILESYSTEM_WRITE_FILE_TOOL_NAME
+                ) {
+                    if let Ok(mut queue) = tool_calls.lock() {
+                        queue.push_back(call.clone());
+                    }
+                }
+                step_tool_calls.push(call.clone());
+                state.ws_hub.emit_turn_event(
+                    &turn.id,
+                    "chat.step.tool.requested",
+                    ToolRequestedPayload {
+                        session_id: turn.session_id.clone(),
+                        turn_id: turn.id.clone(),
+                        step,
+                        state: "started".to_string(),
+                        tool_call: call,
+                        approval: None,
+                    },
+                )?;
+            }
+            StreamEvent::Usage { usage } => {
+                step_usage += usage;
+            }
+            StreamEvent::Done => break,
+        }
+    }
+
+    Ok(StepOutput {
+        text: step_text,
+        reasoning_text: step_reasoning_text,
+        reasoning_parts: step_reasoning_parts,
+        usage: step_usage,
+        tool_calls: step_tool_calls,
+    })
+}
+
+async fn handle_tool_calls(
+    state: &BackendState,
+    turn: &ChatTurn,
+    step: u8,
+    step_tool_calls: &[ToolCall],
+    tool_map: &HashMap<String, Tool>,
+    messages: &mut Vec<Message>,
+    new_persisted_messages: &mut Vec<ChatMessage>,
+) -> AppResult<Vec<ToolResult>> {
+    let mut tool_results = Vec::new();
+    for tool_call in step_tool_calls {
+        let selected_tool = tool_map.get(&tool_call.tool_name);
+        let (tool_result, duration_ms) = if let Some(tool) = selected_tool {
+            execute_tool_call(tool, tool_call).await
+        } else {
+            (
+                ToolResult {
+                    call_id: tool_call.call_id.clone(),
+                    output_json: json!({
+                        "error": format!("unknown tool `{}`", tool_call.tool_name),
+                    }),
+                    is_error: true,
+                },
+                0,
+            )
+        };
+        let tool_action = tool_call
+            .args_json
+            .get("action")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned)
+            .or_else(|| filesystem_tool_action(&tool_call.tool_name).map(ToOwned::to_owned));
+        let _ = state.storage.record_turn_tool_metric(
+            &turn.id,
+            &turn.session_id,
+            &tool_call.tool_name,
+            tool_action.as_deref(),
+            if tool_result.is_error { "error" } else { "ok" },
+            Some(duration_ms),
+            tool_result.is_error,
+        );
+
+        if tool_call.tool_name == "memory_write" {
+            let status = if tool_result.is_error { "error" } else { "ok" };
+            let path = tool_result
+                .output_json
+                .get("path")
+                .and_then(|value| value.as_str())
+                .or_else(|| {
+                    tool_call
+                        .args_json
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                })
+                .unwrap_or("memory/unknown.md");
+            let bytes_written = tool_result
+                .output_json
+                .get("bytes_written")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as usize);
+            let _ = state.storage.record_file_operation(
+                &turn.session_id,
+                &turn.id,
+                Some(&tool_call.call_id),
+                "memory_write",
+                path,
+                status,
+                bytes_written,
+            );
+        }
+
+        state.ws_hub.emit_turn_event(
+            &turn.id,
+            "chat.step.tool.finished",
+            ToolFinishedPayload {
+                session_id: turn.session_id.clone(),
+                turn_id: turn.id.clone(),
+                step,
+                tool_call: tool_call.clone(),
+                tool_result: tool_result.clone(),
+                duration_ms,
+            },
+        )?;
+        let tool_message = Message::tool_result(tool_result.clone());
+        let persisted_tool_message = record_from_message(&turn.session_id, &turn.id, &tool_message)?;
+        messages.push(tool_message);
+        new_persisted_messages.push(persisted_tool_message);
+        tool_results.push(tool_result);
+    }
+    Ok(tool_results)
+}
+
+fn finalize_turn(
+    state: &BackendState,
+    turn: &ChatTurn,
+    session_title: &str,
+    new_persisted_messages: &[ChatMessage],
+    final_output: &str,
+    usage_total: &Usage,
+    step_count: u32,
+) -> AppResult<()> {
+    state.storage.insert_messages(new_persisted_messages)?;
+    let turn_messages = state.storage.list_messages_for_turn(&turn.id)?;
+    let finished_turn =
         state
             .storage
-            .update_run(&run.id, RunStatus::Completed, Some(&final_output), None)?;
+            .update_turn(&turn.id, TurnStatus::Completed, Some(final_output), None)?;
     state
         .storage
-        .update_run_usage_metric(&finished_run, Some(&usage_total))?;
-    let session_title = if session.title == "New chat" {
-        Some(title_from_first_prompt(&run.user_message))
+        .update_turn_usage_metric(&finished_turn, Some(usage_total), Some(step_count))?;
+    let title = if session_title == "New chat" {
+        Some(title_from_first_prompt(&turn.user_message))
     } else {
         None
     };
     state
         .storage
-        .touch_session_for_run(&run.session_id, session_title.as_deref())?;
+        .touch_session_for_turn(&turn.session_id, title.as_deref())?;
     state.publish_sessions_changed()?;
-    state.ws_hub.emit_run_event(
-        &run.id,
-        "chat.run.finished",
-        RunFinishedPayload {
-            session_id: run.session_id.clone(),
-            run: finished_run,
-            new_messages: run_messages,
-            usage_total,
+    state.ws_hub.emit_turn_event(
+        &turn.id,
+        "chat.turn.finished",
+        TurnFinishedPayload {
+            session_id: turn.session_id.clone(),
+            turn: finished_turn,
+            new_messages: turn_messages,
+            usage_total: usage_total.clone(),
         },
     )?;
-    let _ = step_results;
     Ok(())
 }
 
-fn build_run_messages(state: &BackendState, session_id: &str) -> AppResult<Vec<Message>> {
+fn emit_step_finished(state: &BackendState, turn: &ChatTurn, step: &AgentStep) -> AppResult<()> {
+    state
+        .storage
+        .insert_turn_step(&turn.id, &turn.session_id, step)?;
+    state.ws_hub.emit_turn_event(
+        &turn.id,
+        "chat.step.finished",
+        StepFinishedPayload {
+            session_id: turn.session_id.clone(),
+            turn_id: turn.id.clone(),
+            step: step.clone(),
+        },
+    )
+}
+
+fn build_turn_messages(state: &BackendState, session_id: &str) -> AppResult<Vec<Message>> {
     let mut messages = Vec::new();
     messages.push(Message::system_text(state.workspace.build_system_prompt()?));
 
@@ -584,7 +659,7 @@ fn maybe_compact_session_context(
     }
 
     if !force {
-        let assembled = build_run_messages(state, session_id)?;
+        let assembled = build_turn_messages(state, session_id)?;
         let estimated = estimate_tokens_for_messages(&assembled, model);
         let threshold = ((config.max_input_tokens as f32) * config.compact_ratio)
             .round()
@@ -893,14 +968,14 @@ fn filesystem_tool_action(tool_name: &str) -> Option<&'static str> {
     }
 }
 
-fn err_status(err: &AppError) -> RunStatus {
+fn err_status(err: &AppError) -> TurnStatus {
     match err {
-        AppError::Cancelled(_) => RunStatus::Cancelled,
-        _ => RunStatus::Failed,
+        AppError::Cancelled(_) => TurnStatus::Cancelled,
+        _ => TurnStatus::Failed,
     }
 }
 
-pub fn start_run(state: BackendState, session_id: String, text: String) -> AppResult<String> {
+pub fn start_turn(state: BackendState, session_id: String, text: String) -> AppResult<String> {
     let session = state.storage.get_session(&session_id)?;
     let title = if session.title == "New chat" {
         Some(title_from_first_prompt(&text))
@@ -909,15 +984,15 @@ pub fn start_run(state: BackendState, session_id: String, text: String) -> AppRe
     };
     state
         .storage
-        .touch_session_for_run(&session_id, title.as_deref())?;
+        .touch_session_for_turn(&session_id, title.as_deref())?;
     state
         .storage
         .set_last_opened_session_id(Some(&session_id))?;
 
-    let run = crate::backend::models::new_chat_run(session_id.clone(), text.clone());
+    let turn = crate::backend::models::new_chat_turn(session_id.clone(), text.clone());
     let user_message =
-        crate::backend::models::new_user_chat_message(session_id.clone(), run.id.clone(), text);
-    state.storage.insert_run(&run)?;
+        crate::backend::models::new_user_chat_message(session_id.clone(), turn.id.clone(), text);
+    state.storage.insert_turn(&turn)?;
     let provider = if let Some(provider_id) = session.provider_profile_id.as_deref() {
         state.get_provider_profile(provider_id)?
     } else {
@@ -926,21 +1001,21 @@ pub fn start_run(state: BackendState, session_id: String, text: String) -> AppRe
     let detail_logged = state.storage.get_usage_detail_logging_enabled()?;
     state
         .storage
-        .insert_run_usage_metric_start(&run, provider.as_ref(), detail_logged)?;
+        .insert_turn_usage_metric_start(&turn, provider.as_ref(), detail_logged)?;
     state.storage.insert_message(&user_message)?;
     state.publish_sessions_changed()?;
-    state.ws_hub.emit_run_event(
-        &run.id,
-        "chat.run.started",
-        RunStartedPayload {
+    state.ws_hub.emit_turn_event(
+        &turn.id,
+        "chat.turn.started",
+        TurnStartedPayload {
             session_id,
-            run: run.clone(),
+            turn: turn.clone(),
             user_message,
         },
     )?;
-    state.register_run(run.id.clone());
-    spawn_run(state, run.clone());
-    Ok(run.id)
+    state.register_turn(turn.id.clone());
+    spawn_turn(state, turn.clone());
+    Ok(turn.id)
 }
 
 #[cfg(test)]

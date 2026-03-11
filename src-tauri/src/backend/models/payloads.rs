@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    AgentConfigPayload, ChatMessage, ChatRun, ChatSession, ProviderAccount, ProviderProfile,
+    AgentConfigPayload, ChatMessage, ChatTurn, ChatSession, ProviderAccount, ProviderProfile,
     ToolApproval,
 };
 
@@ -21,18 +21,12 @@ pub struct BootstrapPayload {
     pub sessions: Vec<ChatSession>,
     pub messages: Vec<ChatMessage>,
     pub approvals: Vec<ToolApproval>,
-    pub runs: Vec<ChatRun>,
+    pub turns: Vec<ChatTurn>,
     pub last_opened_session_id: Option<String>,
     #[serde(default)]
     pub agent_config: AgentConfigPayload,
     #[serde(default)]
     pub workspace_files: Vec<WorkspaceFileInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct BootstrapRequest {
-    #[serde(default)]
-    pub heartbeat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,16 +124,16 @@ pub struct ConnectionReadyPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunStartedPayload {
+pub struct TurnStartedPayload {
     pub session_id: String,
-    pub run: ChatRun,
+    pub turn: ChatTurn,
     pub user_message: ChatMessage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
     pub text: String,
 }
@@ -147,7 +141,7 @@ pub struct TokenPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningStartedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
     pub block_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,7 +151,7 @@ pub struct ReasoningStartedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningTokenPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
     pub block_id: String,
     pub text: String,
@@ -168,7 +162,7 @@ pub struct ReasoningTokenPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningFinishedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
     pub block_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,21 +172,21 @@ pub struct ReasoningFinishedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStartedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepFinishedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: AgentStep,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolRequestedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
     pub state: String,
     pub tool_call: ToolCall,
@@ -202,7 +196,7 @@ pub struct ToolRequestedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolFinishedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub step: u8,
     pub tool_call: ToolCall,
     pub tool_result: ToolResult,
@@ -210,29 +204,35 @@ pub struct ToolFinishedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunFinishedPayload {
+pub struct TurnFinishedPayload {
     pub session_id: String,
-    pub run: ChatRun,
+    pub turn: ChatTurn,
     pub new_messages: Vec<ChatMessage>,
     pub usage_total: Usage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunFailedPayload {
+pub struct TurnFailedPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
     pub error: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunCancelledPayload {
+pub struct TurnCancelledPayload {
     pub session_id: String,
-    pub run_id: String,
+    pub turn_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HeartbeatPayload {
-    pub server_time: String,
+pub struct TurnStepsListRequest {
+    pub turn_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnStepsListPayload {
+    pub turn_id: String,
+    pub steps: Vec<AgentStep>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,14 +240,4 @@ pub struct AgentMemoryCompactedPayload {
     pub session_id: String,
     pub compacted_messages: u32,
     pub summary_preview: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentHeartbeatExecutedPayload {
-    pub session_id: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
 }

@@ -6,18 +6,17 @@ mod session;
 mod usage;
 mod ws;
 
-pub use common::{now_timestamp, MessageRole, RunStatus};
-pub use config::{
-    AgentActiveHoursConfig, AgentConfigPayload, AgentConfigUpdateRequest, AgentHeartbeatConfig,
-};
+pub use common::{now_timestamp, MessageRole, TurnStatus};
+pub use config::{AgentConfigPayload, AgentConfigUpdateRequest};
 pub use payloads::{
-    AgentHeartbeatExecutedPayload, AgentMemoryCompactedPayload, BootstrapPayload, BootstrapRequest,
-    ConnectionReadyPayload, HeartbeatPayload, MemoryGetPayload, MemoryGetRequest,
+    AgentMemoryCompactedPayload, BootstrapPayload,
+    ConnectionReadyPayload, MemoryGetPayload, MemoryGetRequest,
     MemoryReindexPayload, MemorySearchHit, MemorySearchPayload, MemorySearchRequest,
     ProvidersChangedPayload, ReasoningFinishedPayload, ReasoningStartedPayload,
-    ReasoningTokenPayload, RunCancelledPayload, RunFailedPayload, RunFinishedPayload,
-    RunStartedPayload, SessionsChangedPayload, StepFinishedPayload, StepStartedPayload,
-    TokenPayload, ToolFinishedPayload, ToolRequestedPayload, WorkspaceFileInfo,
+    ReasoningTokenPayload, TurnCancelledPayload, TurnFailedPayload, TurnFinishedPayload,
+    TurnStartedPayload, SessionsChangedPayload, StepFinishedPayload, StepStartedPayload,
+    TokenPayload, ToolFinishedPayload, ToolRequestedPayload, TurnStepsListPayload,
+    TurnStepsListRequest, WorkspaceFileInfo,
     WorkspaceFileReadPayload, WorkspaceFileReadRequest, WorkspaceFileWritePayload,
     WorkspaceFileWriteRequest, WorkspaceFilesPayload,
 };
@@ -29,10 +28,11 @@ pub use provider::{
     TestProviderModelRequest, UpdateProviderModelRequest, UpdateProviderRequest,
 };
 pub use session::{
-    message_from_record, new_chat_run, new_chat_session, new_tool_approval, new_user_chat_message,
-    record_from_message, title_from_first_prompt, BindSessionProviderRequest, ChatCancelRequest,
-    ChatMessage, ChatRun, ChatSendRequest, ChatSession, CreateSessionRequest, DeleteSessionRequest,
-    ToolApproval, ToolApprovalResolveRequest,
+    message_from_record, new_chat_turn, new_chat_session, new_tool_approval, new_user_chat_message,
+    record_from_message, title_from_first_prompt, BindSessionProviderRequest,
+    ChatMessage, ChatTurn, ChatTurnCancelRequest, ChatTurnStartRequest, ChatSession,
+    CreateSessionRequest, DeleteSessionRequest, RenameSessionRequest, ToolApproval,
+    ToolApprovalResolveRequest,
 };
 pub use usage::{
     UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,

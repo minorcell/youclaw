@@ -26,7 +26,7 @@ pub struct WsEnvelope {
     #[serde(default)]
     pub payload: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
+    pub turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ok: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,14 +41,14 @@ impl WsEnvelope {
             kind: WsKind::Event,
             name: name.into(),
             payload,
-            run_id: None,
+            turn_id: None,
             ok: None,
             error: None,
         })
     }
 
-    pub fn event_for_run(
-        run_id: impl Into<String>,
+    pub fn event_for_turn(
+        turn_id: impl Into<String>,
         name: impl Into<String>,
         payload: impl Serialize,
     ) -> AppResult<Self> {
@@ -58,7 +58,7 @@ impl WsEnvelope {
             kind: WsKind::Event,
             name: name.into(),
             payload,
-            run_id: Some(run_id.into()),
+            turn_id: Some(turn_id.into()),
             ok: None,
             error: None,
         })
@@ -75,7 +75,7 @@ impl WsEnvelope {
             kind: WsKind::Response,
             name: name.into(),
             payload,
-            run_id: None,
+            turn_id: None,
             ok: Some(true),
             error: None,
         })
@@ -87,7 +87,7 @@ impl WsEnvelope {
             kind: WsKind::Response,
             name: name.into(),
             payload: Value::Null,
-            run_id: None,
+            turn_id: None,
             ok: Some(false),
             error: Some(WsErrorPayload {
                 code: err.code().to_string(),

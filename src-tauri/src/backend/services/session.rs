@@ -1,5 +1,7 @@
 use super::super::*;
 
+const SESSION_TITLE_MAX_CHARS: usize = 48;
+
 impl BackendState {
     pub fn create_session(&self, provider_profile_id: Option<String>) -> AppResult<ChatSession> {
         if let Some(profile_id) = provider_profile_id.as_deref() {
@@ -34,6 +36,23 @@ impl BackendState {
 
     pub fn delete_session(&self, session_id: &str) -> AppResult<()> {
         self.storage.delete_session(session_id)?;
+        self.publish_sessions_changed()?;
+        Ok(())
+    }
+
+    pub fn rename_session(&self, session_id: &str, title: &str) -> AppResult<()> {
+        let next_title = title.trim();
+        if next_title.is_empty() {
+            return Err(AppError::Validation(
+                "session title cannot be empty".to_string(),
+            ));
+        }
+        let normalized_title = next_title
+            .chars()
+            .take(SESSION_TITLE_MAX_CHARS)
+            .collect::<String>();
+        self.storage
+            .update_session_title(session_id, normalized_title.as_str())?;
         self.publish_sessions_changed()?;
         Ok(())
     }

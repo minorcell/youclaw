@@ -38,8 +38,8 @@ const APPROVAL_TIMEOUT_SECS: u64 = 600;
 pub struct FilesystemToolContext {
     /// 会话 ID，用于记录审计日志与事件。
     pub session_id: String,
-    /// Run ID，用于关联当前这轮对话执行流。
-    pub run_id: String,
+    /// Turn ID，用于关联当前这轮对话执行流。
+    pub turn_id: String,
     /// 工作区根目录，相对路径统一基于该目录解析。
     pub workspace_root: PathBuf,
     /// 当前步骤序号（step），用于事件中标记执行进度。
@@ -60,7 +60,7 @@ impl FilesystemToolContext {
     /// 列出目录内容。
     ///
     /// - 相对路径基于 workspace_root
-    /// - 记录 run 级别文件操作审计日志
+    /// - 记录 turn 级别文件操作审计日志
     pub fn list_dir(&self, tool_name: &str, input_path: &str) -> AppResult<Value> {
         let resolved = resolve_path(input_path, &self.workspace_root)?;
         let tool_call = self.claim_tool_call(tool_name, "list_dir", input_path);
@@ -78,7 +78,7 @@ impl FilesystemToolContext {
             .collect::<Result<Vec<_>, std::io::Error>>()?;
         self.storage.record_file_operation(
             &self.session_id,
-            &self.run_id,
+            &self.turn_id,
             Some(&tool_call.call_id),
             "list_dir",
             &resolved.to_string_lossy(),
@@ -123,7 +123,7 @@ impl FilesystemToolContext {
             .join("\n");
         self.storage.record_file_operation(
             &self.session_id,
-            &self.run_id,
+            &self.turn_id,
             Some(&tool_call.call_id),
             "read_file",
             &resolved.to_string_lossy(),
@@ -161,19 +161,19 @@ impl FilesystemToolContext {
         });
         let approval = new_tool_approval(
             self.session_id.clone(),
-            self.run_id.clone(),
+            self.turn_id.clone(),
             tool_call.call_id.clone(),
             "write_file",
             resolved.to_string_lossy().to_string(),
             preview_json,
         );
         let receiver = self.approvals.register_pending(approval.clone())?;
-        self.hub.emit_run_event(
-            &self.run_id,
-            "chat.tool.requested",
+        self.hub.emit_turn_event(
+            &self.turn_id,
+            "chat.step.tool.requested",
             ToolRequestedPayload {
                 session_id: self.session_id.clone(),
-                run_id: self.run_id.clone(),
+                turn_id: self.turn_id.clone(),
                 step: self.current_step.load(Ordering::Relaxed),
                 state: "awaiting_approval".to_string(),
                 tool_call: tool_call.clone(),
@@ -186,7 +186,7 @@ impl FilesystemToolContext {
             Err(ApprovalWaitError::Cancelled) => {
                 let _ = self.approvals.mark_status(&approval.id, "cancelled");
                 return Err(AppError::Cancelled(
-                    "run cancelled while waiting for approval".to_string(),
+                    "turn cancelled while waiting for approval".to_string(),
                 ));
             }
             Err(ApprovalWaitError::TimedOut) => {
@@ -201,7 +201,7 @@ impl FilesystemToolContext {
         if !decision {
             self.storage.record_file_operation(
                 &self.session_id,
-                &self.run_id,
+                &self.turn_id,
                 Some(&tool_call.call_id),
                 "write_file",
                 &resolved.to_string_lossy(),
@@ -220,7 +220,7 @@ impl FilesystemToolContext {
         fs::write(&resolved, content.as_bytes())?;
         self.storage.record_file_operation(
             &self.session_id,
-            &self.run_id,
+            &self.turn_id,
             Some(&tool_call.call_id),
             "write_file",
             &resolved.to_string_lossy(),
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn relative_paths_resolve_without_error() {
-        let workspace_root = Path::new("/tmp/bgtclaw-workspace");
+        let workspace_root = Path::new("/tmp/youclaw-workspace");
         let path = resolve_path("Desktop/example.txt", workspace_root).expect("resolved path");
         assert!(path.is_absolute());
         assert!(path.starts_with(workspace_root));
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn absolute_paths_are_preserved() {
-        let workspace_root = Path::new("/tmp/bgtclaw-workspace");
+        let workspace_root = Path::new("/tmp/youclaw-workspace");
         let absolute = Path::new("/tmp/absolute/example.txt");
         let path = resolve_path(absolute.to_string_lossy().as_ref(), workspace_root)
             .expect("resolved path");
