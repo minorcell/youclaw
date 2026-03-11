@@ -1,4 +1,4 @@
-export type WsKind = "request" | "response" | "event"
+export type WsKind = 'request' | 'response' | 'event'
 
 export interface WsErrorPayload {
   code: string
@@ -68,7 +68,7 @@ export interface ReasoningPart {
 export interface ChatMessage {
   id: string
   session_id: string
-  role: "system" | "user" | "assistant" | "tool"
+  role: 'system' | 'user' | 'assistant' | 'tool'
   parts_json: ContentPart[]
   run_id: string | null
   created_at: string
@@ -289,16 +289,16 @@ export interface AgentHeartbeatExecutedPayload {
 export type TimelineItem =
   | {
       id: string
-      kind: "step"
+      kind: 'step'
       step: number
-      status: "started" | "finished"
+      status: 'started' | 'finished'
       outputText: string
       reasoningText: string
       usage?: Usage
     }
   | {
       id: string
-      kind: "tool"
+      kind: 'tool'
       step: number
       state: string
       toolCall: ToolCall
@@ -311,12 +311,12 @@ export interface RunViewState {
   run: ChatRun
   sessionId: string
   timeline: TimelineItem[]
-  liveStepsById: Record<string, Extract<TimelineItem, { kind: "step" }>>
+  liveStepsById: Record<string, Extract<TimelineItem, { kind: 'step' }>>
   usageTotal?: Usage
   error?: string
 }
 
-export type UsageStatsRange = "24h" | "7d" | "30d" | "all"
+export type UsageStatsRange = '24h' | '7d' | '30d' | 'all'
 
 export interface UsagePage {
   page: number

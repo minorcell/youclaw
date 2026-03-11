@@ -1,31 +1,31 @@
-import type { CustomThemePalette, ThemeMode } from "@/store/settings-store"
+import type { CustomThemePalette, ThemeMode } from '@/store/settings-store'
 
 const CUSTOM_THEME_VARS = [
-  "--background",
-  "--foreground",
-  "--card",
-  "--card-foreground",
-  "--popover",
-  "--popover-foreground",
-  "--primary",
-  "--primary-foreground",
-  "--secondary",
-  "--secondary-foreground",
-  "--muted",
-  "--muted-foreground",
-  "--accent",
-  "--accent-foreground",
-  "--border",
-  "--input",
-  "--ring",
-  "--sidebar",
-  "--sidebar-foreground",
-  "--sidebar-primary",
-  "--sidebar-primary-foreground",
-  "--sidebar-accent",
-  "--sidebar-accent-foreground",
-  "--sidebar-border",
-  "--sidebar-ring",
+  '--background',
+  '--foreground',
+  '--card',
+  '--card-foreground',
+  '--popover',
+  '--popover-foreground',
+  '--primary',
+  '--primary-foreground',
+  '--secondary',
+  '--secondary-foreground',
+  '--muted',
+  '--muted-foreground',
+  '--accent',
+  '--accent-foreground',
+  '--border',
+  '--input',
+  '--ring',
+  '--sidebar',
+  '--sidebar-foreground',
+  '--sidebar-primary',
+  '--sidebar-primary-foreground',
+  '--sidebar-accent',
+  '--sidebar-accent-foreground',
+  '--sidebar-border',
+  '--sidebar-ring',
 ] as const
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -41,9 +41,9 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 
 function contrastColor(background: string): string {
   const rgb = hexToRgb(background)
-  if (!rgb) return "#f5f5f5"
+  if (!rgb) return '#f5f5f5'
   const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000
-  return brightness > 145 ? "#161616" : "#f5f5f5"
+  return brightness > 145 ? '#161616' : '#f5f5f5'
 }
 
 function applyCustomTheme(palette: CustomThemePalette) {
@@ -54,32 +54,32 @@ function applyCustomTheme(palette: CustomThemePalette) {
   const accentForeground = contrastColor(palette.accent)
   const sidebarForeground = contrastColor(palette.sidebar)
 
-  root.style.setProperty("--background", palette.background)
-  root.style.setProperty("--foreground", foreground)
-  root.style.setProperty("--card", palette.card)
-  root.style.setProperty("--card-foreground", cardForeground)
-  root.style.setProperty("--popover", palette.card)
-  root.style.setProperty("--popover-foreground", cardForeground)
-  root.style.setProperty("--primary", palette.primary)
-  root.style.setProperty("--primary-foreground", primaryForeground)
-  root.style.setProperty("--secondary", palette.muted)
-  root.style.setProperty("--secondary-foreground", foreground)
-  root.style.setProperty("--muted", palette.muted)
-  root.style.setProperty("--muted-foreground", foreground)
-  root.style.setProperty("--accent", palette.accent)
-  root.style.setProperty("--accent-foreground", accentForeground)
-  root.style.setProperty("--border", palette.border)
-  root.style.setProperty("--input", palette.border)
-  root.style.setProperty("--ring", palette.primary)
+  root.style.setProperty('--background', palette.background)
+  root.style.setProperty('--foreground', foreground)
+  root.style.setProperty('--card', palette.card)
+  root.style.setProperty('--card-foreground', cardForeground)
+  root.style.setProperty('--popover', palette.card)
+  root.style.setProperty('--popover-foreground', cardForeground)
+  root.style.setProperty('--primary', palette.primary)
+  root.style.setProperty('--primary-foreground', primaryForeground)
+  root.style.setProperty('--secondary', palette.muted)
+  root.style.setProperty('--secondary-foreground', foreground)
+  root.style.setProperty('--muted', palette.muted)
+  root.style.setProperty('--muted-foreground', foreground)
+  root.style.setProperty('--accent', palette.accent)
+  root.style.setProperty('--accent-foreground', accentForeground)
+  root.style.setProperty('--border', palette.border)
+  root.style.setProperty('--input', palette.border)
+  root.style.setProperty('--ring', palette.primary)
 
-  root.style.setProperty("--sidebar", palette.sidebar)
-  root.style.setProperty("--sidebar-foreground", sidebarForeground)
-  root.style.setProperty("--sidebar-primary", palette.primary)
-  root.style.setProperty("--sidebar-primary-foreground", primaryForeground)
-  root.style.setProperty("--sidebar-accent", palette.accent)
-  root.style.setProperty("--sidebar-accent-foreground", accentForeground)
-  root.style.setProperty("--sidebar-border", palette.border)
-  root.style.setProperty("--sidebar-ring", palette.primary)
+  root.style.setProperty('--sidebar', palette.sidebar)
+  root.style.setProperty('--sidebar-foreground', sidebarForeground)
+  root.style.setProperty('--sidebar-primary', palette.primary)
+  root.style.setProperty('--sidebar-primary-foreground', primaryForeground)
+  root.style.setProperty('--sidebar-accent', palette.accent)
+  root.style.setProperty('--sidebar-accent-foreground', accentForeground)
+  root.style.setProperty('--sidebar-border', palette.border)
+  root.style.setProperty('--sidebar-ring', palette.primary)
 }
 
 function clearCustomTheme() {
@@ -92,16 +92,16 @@ function clearCustomTheme() {
 export function applyTheme(mode: ThemeMode, customTheme: CustomThemePalette) {
   const root = document.documentElement
   clearCustomTheme()
-  root.classList.remove("dark")
+  root.classList.remove('dark')
 
-  if (mode === "black") {
-    root.classList.add("dark")
-    root.style.colorScheme = "dark"
+  if (mode === 'black') {
+    root.classList.add('dark')
+    root.style.colorScheme = 'dark'
     return
   }
 
-  root.style.colorScheme = "light"
-  if (mode === "custom") {
+  root.style.colorScheme = 'light'
+  if (mode === 'custom') {
     applyCustomTheme(customTheme)
   }
 }

@@ -1,4 +1,4 @@
-import { create } from "zustand"
+import { create } from 'zustand'
 
 import type {
   BootstrapPayload,
@@ -22,9 +22,9 @@ import type {
   ToolFinishedPayload,
   ToolRequestedPayload,
   WsEnvelope,
-} from "@/lib/types"
+} from '@/lib/types'
 
-export type WsStatus = "idle" | "connecting" | "open" | "closed" | "error"
+export type WsStatus = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 
 interface AppStoreState {
   initialized: boolean
@@ -60,10 +60,7 @@ function groupMessages(messages: ChatMessage[]): Record<string, ChatMessage[]> {
   }, {})
 }
 
-function mergeUniqueMessages(
-  messages: ChatMessage[],
-  incoming: ChatMessage[],
-): ChatMessage[] {
+function mergeUniqueMessages(messages: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
   if (incoming.length === 0) {
     return messages
   }
@@ -120,7 +117,7 @@ function buildActiveRunIdBySession(runs: ChatRun[]): Record<string, string> {
 
 export const useAppStore = create<AppStoreState>((set) => ({
   initialized: false,
-  wsStatus: "idle",
+  wsStatus: 'idle',
   endpoint: null,
   providerAccounts: [],
   sessions: [],
@@ -139,15 +136,15 @@ export const useAppStore = create<AppStoreState>((set) => ({
     set((state) => {
       const next: Partial<AppStoreState> = {}
 
-      if (envelope.kind === "response" && envelope.ok === false && envelope.error) {
+      if (envelope.kind === 'response' && envelope.ok === false && envelope.error) {
         next.lastError = envelope.error.message
         return next as AppStoreState
       }
 
       switch (envelope.name) {
-        case "bootstrap.get": {
+        case 'bootstrap.get': {
           const payload = envelope.payload as BootstrapPayload
-          if (!payload || !("provider_accounts" in payload)) {
+          if (!payload || !('provider_accounts' in payload)) {
             return state
           }
           next.initialized = true
@@ -172,28 +169,31 @@ export const useAppStore = create<AppStoreState>((set) => ({
           next.activeRunIdBySession = buildActiveRunIdBySession(payload.runs)
           next.lastOpenedSessionId = payload.last_opened_session_id
           next.activeSessionId =
-            state.activeSessionId ?? payload.last_opened_session_id ?? payload.sessions[0]?.id ?? null
+            state.activeSessionId ??
+            payload.last_opened_session_id ??
+            payload.sessions[0]?.id ??
+            null
           next.lastError = null
           return next as AppStoreState
         }
-        case "providers.changed": {
+        case 'providers.changed': {
           const payload = envelope.payload as ProvidersChangedPayload
           next.providerAccounts = payload.provider_accounts ?? []
           return next as AppStoreState
         }
-        case "providers.list": {
+        case 'providers.list': {
           const payload = envelope.payload as ProvidersChangedPayload
           next.providerAccounts = payload.provider_accounts ?? []
           return next as AppStoreState
         }
-        case "sessions.changed":
-        case "sessions.list": {
+        case 'sessions.changed':
+        case 'sessions.list': {
           const payload = envelope.payload as SessionsChangedPayload
           next.sessions = payload.sessions
           next.lastOpenedSessionId = payload.last_opened_session_id
           return next as AppStoreState
         }
-        case "tool_approvals.resolve": {
+        case 'tool_approvals.resolve': {
           const approval = envelope.payload as ToolApproval
           next.approvalsById = {
             ...state.approvalsById,
@@ -202,12 +202,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
           next.lastError = null
           return next as AppStoreState
         }
-        case "chat.run.started": {
+        case 'chat.run.started': {
           const payload = envelope.payload as RunStartedPayload
-          const messages = mergeUniqueMessages(
-            state.messagesBySession[payload.session_id] ?? [],
-            [payload.user_message],
-          )
+          const messages = mergeUniqueMessages(state.messagesBySession[payload.session_id] ?? [], [
+            payload.user_message,
+          ])
           const current = getOrCreateRunView(state, payload.run)
           next.messagesBySession = {
             ...state.messagesBySession,
@@ -230,24 +229,24 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.token": {
+        case 'chat.token': {
           const payload = envelope.payload as TokenPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
           const existingStep = current.liveStepsById[stepId]
-          const nextStep: Extract<TimelineItem, { kind: "step" }> = existingStep
+          const nextStep: Extract<TimelineItem, { kind: 'step' }> = existingStep
             ? {
                 ...existingStep,
                 outputText: `${existingStep.outputText}${payload.text}`,
               }
             : {
                 id: stepId,
-                kind: "step",
+                kind: 'step',
                 step: payload.step,
-                status: "started",
+                status: 'started',
                 outputText: payload.text,
-                reasoningText: "",
+                reasoningText: '',
               }
           next.runsById = {
             ...state.runsById,
@@ -261,23 +260,23 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.reasoning.token": {
+        case 'chat.reasoning.token': {
           const payload = envelope.payload as ReasoningTokenPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
           const stepId = `step-${payload.step}`
           const existingStep = current.liveStepsById[stepId]
-          const nextStep: Extract<TimelineItem, { kind: "step" }> = existingStep
+          const nextStep: Extract<TimelineItem, { kind: 'step' }> = existingStep
             ? {
                 ...existingStep,
                 reasoningText: `${existingStep.reasoningText}${payload.text}`,
               }
             : {
                 id: stepId,
-                kind: "step",
+                kind: 'step',
                 step: payload.step,
-                status: "started",
-                outputText: "",
+                status: 'started',
+                outputText: '',
                 reasoningText: payload.text,
               }
           next.runsById = {
@@ -292,7 +291,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.step.started": {
+        case 'chat.step.started': {
           const payload = envelope.payload as StepStartedPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
@@ -306,18 +305,18 @@ export const useAppStore = create<AppStoreState>((set) => ({
                 ...current.liveStepsById,
                 [stepId]: {
                   id: stepId,
-                  kind: "step",
+                  kind: 'step',
                   step: payload.step,
-                  status: "started",
-                  outputText: existingStep?.outputText ?? "",
-                  reasoningText: existingStep?.reasoningText ?? "",
+                  status: 'started',
+                  outputText: existingStep?.outputText ?? '',
+                  reasoningText: existingStep?.reasoningText ?? '',
                 },
               },
             },
           }
           return next as AppStoreState
         }
-        case "chat.step.finished": {
+        case 'chat.step.finished': {
           const payload = envelope.payload as StepFinishedPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
@@ -330,11 +329,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
                 id: stepId,
-                kind: "step",
+                kind: 'step',
                 step: payload.step.step,
-                status: "finished",
+                status: 'finished',
                 outputText: payload.step.output_text,
-                reasoningText: payload.step.reasoning_text ?? "",
+                reasoningText: payload.step.reasoning_text ?? '',
                 usage: payload.step.usage,
               }),
               liveStepsById,
@@ -342,7 +341,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.tool.requested": {
+        case 'chat.tool.requested': {
           const payload = envelope.payload as ToolRequestedPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
@@ -357,7 +356,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
                 id: `tool-${payload.tool_call.call_id}`,
-                kind: "tool",
+                kind: 'tool',
                 step: payload.step,
                 state: payload.state,
                 toolCall: payload.tool_call,
@@ -367,7 +366,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.tool.finished": {
+        case 'chat.tool.finished': {
           const payload = envelope.payload as ToolFinishedPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
@@ -377,9 +376,9 @@ export const useAppStore = create<AppStoreState>((set) => ({
               ...current,
               timeline: upsertTimelineItem(current.timeline, {
                 id: `tool-${payload.tool_call.call_id}`,
-                kind: "tool",
+                kind: 'tool',
                 step: payload.step,
-                state: "finished",
+                state: 'finished',
                 toolCall: payload.tool_call,
                 toolResult: payload.tool_result,
                 durationMs: payload.duration_ms,
@@ -388,7 +387,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.run.finished": {
+        case 'chat.run.finished': {
           const payload = envelope.payload as RunFinishedPayload
           const current = getOrCreateRunView(state, payload.run)
           const messages = mergeUniqueMessages(
@@ -411,7 +410,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           }
           return next as AppStoreState
         }
-        case "chat.run.failed": {
+        case 'chat.run.failed': {
           const payload = envelope.payload as RunFailedPayload
           const current = state.runsById[payload.run_id]
           if (!current) {
@@ -424,7 +423,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
               ...current,
               run: {
                 ...current.run,
-                status: "failed",
+                status: 'failed',
                 error_message: payload.error,
               },
               liveStepsById: {},
@@ -434,7 +433,7 @@ export const useAppStore = create<AppStoreState>((set) => ({
           next.lastError = payload.error
           return next as AppStoreState
         }
-        case "chat.run.cancelled": {
+        case 'chat.run.cancelled': {
           const payload = envelope.payload as RunCancelledPayload
           const current = state.runsById[payload.run_id]
           if (!current) return state
@@ -444,11 +443,11 @@ export const useAppStore = create<AppStoreState>((set) => ({
               ...current,
               run: {
                 ...current.run,
-                status: "cancelled",
-                error_message: "Run cancelled",
+                status: 'cancelled',
+                error_message: 'Run cancelled',
               },
               liveStepsById: {},
-              error: "Run cancelled",
+              error: 'Run cancelled',
             },
           }
           return next as AppStoreState

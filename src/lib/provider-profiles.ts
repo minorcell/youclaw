@@ -1,8 +1,6 @@
-import type { ProviderAccount, ProviderProfile } from "@/lib/types"
+import type { ProviderAccount, ProviderProfile } from '@/lib/types'
 
-export function flattenProviderProfiles(
-  providerAccounts: ProviderAccount[],
-): ProviderProfile[] {
+export function flattenProviderProfiles(providerAccounts: ProviderAccount[]): ProviderProfile[] {
   const profiles: ProviderProfile[] = []
 
   for (const provider of providerAccounts) {

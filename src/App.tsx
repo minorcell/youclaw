@@ -1,25 +1,25 @@
-import { invoke } from "@tauri-apps/api/core"
-import { useEffect } from "react"
-import { RouterProvider, createHashRouter } from "react-router-dom"
+import { invoke } from '@tauri-apps/api/core'
+import { useEffect } from 'react'
+import { RouterProvider, createHashRouter } from 'react-router-dom'
 
-import { AppLayout } from "@/components/layouts"
-import { ToastProvider } from "@/contexts/toast-context"
-import { setAppClient } from "@/lib/app-client"
-import { applyTheme } from "@/lib/theme"
-import { AppWsClient } from "@/lib/ws-client"
-import { ChatPage } from "@/pages/chat"
-import { HomeRedirectPage, ProviderOnboardingPage } from "@/pages/welcome"
-import { SettingsPage } from "@/pages/settings"
-import { useAppStore } from "@/store/app-store"
-import { useSettingsStore } from "@/store/settings-store"
+import { AppLayout } from '@/components/layouts'
+import { ToastProvider } from '@/contexts/toast-context'
+import { setAppClient } from '@/lib/app-client'
+import { applyTheme } from '@/lib/theme'
+import { AppWsClient } from '@/lib/ws-client'
+import { ChatPage } from '@/pages/chat'
+import { HomeRedirectPage, ProviderOnboardingPage } from '@/pages/welcome'
+import { SettingsPage } from '@/pages/settings'
+import { useAppStore } from '@/store/app-store'
+import { useSettingsStore } from '@/store/settings-store'
 
 const router = createHashRouter([
   {
-    path: "/welcome/provider",
+    path: '/welcome/provider',
     element: <ProviderOnboardingPage />,
   },
   {
-    path: "/",
+    path: '/',
     element: <AppLayout />,
     children: [
       {
@@ -27,13 +27,13 @@ const router = createHashRouter([
         element: <HomeRedirectPage />,
       },
       {
-        path: "chat/:sessionId",
+        path: 'chat/:sessionId',
         element: <ChatPage />,
       },
     ],
   },
   {
-    path: "/settings",
+    path: '/settings',
     element: <SettingsPage />,
   },
 ])
@@ -50,14 +50,14 @@ export default function App() {
 
     function reportBootstrapError(error: unknown) {
       const message = String(error)
-      setWsStatus("error")
+      setWsStatus('error')
       useAppStore.getState().applyEnvelope({
         id: crypto.randomUUID(),
-        kind: "response",
-        name: "bootstrap.get",
+        kind: 'response',
+        name: 'bootstrap.get',
         payload: null,
         ok: false,
-        error: { code: "bootstrap_failed", message },
+        error: { code: 'bootstrap_failed', message },
       })
     }
 
@@ -65,15 +65,13 @@ export default function App() {
       let lastError: unknown = null
       for (let attempt = 0; attempt < 8; attempt += 1) {
         try {
-          return await invoke<string>("get_ws_endpoint")
+          return await invoke<string>('get_ws_endpoint')
         } catch (error) {
           lastError = error
-          await new Promise((resolve) =>
-            window.setTimeout(resolve, 150 * (attempt + 1)),
-          )
+          await new Promise((resolve) => window.setTimeout(resolve, 150 * (attempt + 1)))
         }
       }
-      throw lastError ?? new Error("Unable to resolve ws endpoint")
+      throw lastError ?? new Error('Unable to resolve ws endpoint')
     }
 
     async function bootstrap() {
@@ -96,8 +94,8 @@ export default function App() {
               return
             }
             setWsStatus(status)
-            if (status === "open") {
-              void nextClient.request("bootstrap.get", {}).catch((error) => {
+            if (status === 'open') {
+              void nextClient.request('bootstrap.get', {}).catch((error) => {
                 if (disposed) {
                   return
                 }

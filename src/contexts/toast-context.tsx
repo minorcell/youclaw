@@ -1,12 +1,7 @@
-import {
-  createContext,
-  useContext,
-  useMemo,
-  type PropsWithChildren,
-} from "react"
-import { toast, type ExternalToast } from "sonner"
+import { createContext, useContext, useMemo, type PropsWithChildren } from 'react'
+import { toast, type ExternalToast } from 'sonner'
 
-import { Toaster } from "@/components/ui/sonner"
+import { Toaster } from '@/components/ui/sonner'
 
 type ToastId = string | number
 
@@ -45,7 +40,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <Toaster position="top-center" richColors />
+      <Toaster position='top-center' richColors />
     </ToastContext.Provider>
   )
 }
@@ -53,7 +48,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
 export function useToastContext() {
   const context = useContext(ToastContext)
   if (!context) {
-    throw new Error("useToastContext must be used within ToastProvider")
+    throw new Error('useToastContext must be used within ToastProvider')
   }
   return context
 }
