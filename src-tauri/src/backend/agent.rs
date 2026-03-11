@@ -26,7 +26,8 @@ use crate::backend::models::{
     StepFinishedPayload, StepStartedPayload, TokenPayload, ToolFinishedPayload,
     ToolRequestedPayload,
 };
-use crate::backend::{normalize_openai_compatible_endpoint, BackendState};
+use crate::backend::provider::normalize_openai_compatible_endpoint;
+use crate::backend::BackendState;
 
 const MAX_OUTPUT_TOKENS: u32 = 1400;
 const SUMMARY_CHAR_LIMIT: usize = 16_000;
@@ -46,6 +47,20 @@ pub fn spawn_run(state: BackendState, run: ChatRun) {
             {
                 let _ = state.storage.update_run_usage_metric(&updated_run, None);
             }
+            let payload = if matches!(err, AppError::Cancelled(_)) {
+                serde_json::to_value(RunCancelledPayload {
+                    session_id,
+                    run_id: run_id.clone(),
+                })
+                .unwrap_or_default()
+            } else {
+                serde_json::to_value(RunFailedPayload {
+                    session_id,
+                    run_id: run_id.clone(),
+                    error: err.message(),
+                })
+                .unwrap_or_default()
+            };
             let _ = state.ws_hub.emit_run_event(
                 &run_id,
                 if matches!(err, AppError::Cancelled(_)) {
@@ -53,20 +68,7 @@ pub fn spawn_run(state: BackendState, run: ChatRun) {
                 } else {
                     "chat.run.failed"
                 },
-                if matches!(err, AppError::Cancelled(_)) {
-                    RunCancelledPayload {
-                        session_id,
-                        run_id: run_id.clone(),
-                    }
-                    .into_payload()
-                } else {
-                    RunFailedPayload {
-                        session_id,
-                        run_id: run_id.clone(),
-                        error: err.message(),
-                    }
-                    .into_payload()
-                },
+                payload,
             );
         }
         state.unregister_run(&run_id);
@@ -894,22 +896,6 @@ fn err_status(err: &AppError) -> &str {
     match err {
         AppError::Cancelled(_) => "cancelled",
         _ => "failed",
-    }
-}
-
-trait PayloadExt {
-    fn into_payload(self) -> serde_json::Value;
-}
-
-impl PayloadExt for RunCancelledPayload {
-    fn into_payload(self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
-    }
-}
-
-impl PayloadExt for RunFailedPayload {
-    fn into_payload(self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
     }
 }
 

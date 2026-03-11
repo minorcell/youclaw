@@ -15,7 +15,7 @@ use tokio::time::sleep;
 use crate::backend::agent;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
-    new_chat_session, AgentActiveHoursConfig, AgentConfigUpdateRequest,
+    new_chat_session, now_timestamp, AgentActiveHoursConfig, AgentConfigUpdateRequest,
     AgentHeartbeatExecutedPayload, BindSessionProviderRequest, BootstrapRequest, ChatCancelRequest,
     ChatSendRequest, ConnectionReadyPayload, CreateProviderModelRequest, CreateProviderRequest,
     CreateSessionRequest, DeleteProviderModelRequest, DeleteSessionRequest, HeartbeatPayload,
@@ -24,7 +24,7 @@ use crate::backend::models::{
     UsageSettingsUpdateRequest, UsageStatsListRequest, UsageSummaryRequest,
     WorkspaceFileReadRequest, WorkspaceFileWriteRequest, WsEnvelope, WsKind,
 };
-use crate::backend::{now_timestamp, BackendState};
+use crate::backend::BackendState;
 
 pub async fn start_ws_server(state: BackendState) -> AppResult<String> {
     let listener = TcpListener::bind("127.0.0.1:0")
