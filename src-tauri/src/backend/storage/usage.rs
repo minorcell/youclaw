@@ -74,7 +74,7 @@ impl StorageService {
                 provider.map(|item| item.id.clone()),
                 provider.map(|item| item.model_name.clone()),
                 provider.map(|item| item.model.clone()),
-                run.status,
+                run.status.as_str(),
                 run.user_message,
                 run.created_at,
                 if detail_logged { 1i64 } else { 0i64 },
@@ -115,7 +115,7 @@ impl StorageService {
              WHERE run_id = ?1",
             params![
                 run.id,
-                run.status,
+                run.status.as_str(),
                 run.finished_at,
                 duration_ms,
                 usage_value.input_tokens as i64,
@@ -142,7 +142,7 @@ impl StorageService {
                 params![
                     run.id,
                     run.session_id,
-                    run.status,
+                    run.status.as_str(),
                     run.user_message,
                     run.created_at,
                     run.finished_at,

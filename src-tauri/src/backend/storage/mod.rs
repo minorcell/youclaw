@@ -18,13 +18,13 @@ use crate::backend::models::{
     flatten_provider_profiles, message_from_record, migrate_provider_accounts_from_legacy,
     normalize_provider_accounts, now_timestamp, AgentActiveHoursConfig, AgentConfigPayload,
     AgentConfigUpdateRequest, BootstrapPayload, ChatMessage, ChatRun, ChatSession,
-    MemoryReindexPayload, MemorySearchHit, MemorySearchPayload, ProviderAccount, ProviderProfile,
-    SessionsChangedPayload, StoredProviders, ToolApproval, UsageLogDetailPayload,
-    UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest, UsageLogsPayload,
-    UsageModelStatsItem, UsageModelStatsPayload, UsagePage, UsageProviderStatsItem,
-    UsageProviderStatsPayload, UsageSettingsPayload, UsageStatsListRequest, UsageSummaryPayload,
-    UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload,
-    USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
+    MemoryReindexPayload, MemorySearchHit, MemorySearchPayload, MessageRole, ProviderAccount,
+    ProviderProfile, RunStatus, SessionsChangedPayload, StoredProviders, ToolApproval,
+    UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,
+    UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
+    UsageProviderStatsItem, UsageProviderStatsPayload, UsageSettingsPayload, UsageStatsListRequest,
+    UsageSummaryPayload, UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem,
+    UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };
 
 #[derive(Clone)]

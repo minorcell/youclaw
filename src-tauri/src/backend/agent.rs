@@ -22,7 +22,7 @@ use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     now_timestamp, record_from_message, title_from_first_prompt, AgentMemoryCompactedPayload,
     ChatMessage, ChatRun, ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload,
-    RunCancelledPayload, RunFailedPayload, RunFinishedPayload, RunStartedPayload,
+    RunCancelledPayload, RunFailedPayload, RunFinishedPayload, RunStartedPayload, RunStatus,
     StepFinishedPayload, StepStartedPayload, TokenPayload, ToolFinishedPayload,
     ToolRequestedPayload,
 };
@@ -501,9 +501,10 @@ async fn execute_run(state: BackendState, run: ChatRun) -> AppResult<()> {
 
     state.storage.insert_messages(&new_persisted_messages)?;
     let run_messages = state.storage.list_messages_for_run(&run.id)?;
-    let finished_run = state
-        .storage
-        .update_run(&run.id, "completed", Some(&final_output), None)?;
+    let finished_run =
+        state
+            .storage
+            .update_run(&run.id, RunStatus::Completed, Some(&final_output), None)?;
     state
         .storage
         .update_run_usage_metric(&finished_run, Some(&usage_total))?;
@@ -892,10 +893,10 @@ fn filesystem_tool_action(tool_name: &str) -> Option<&'static str> {
     }
 }
 
-fn err_status(err: &AppError) -> &str {
+fn err_status(err: &AppError) -> RunStatus {
     match err {
-        AppError::Cancelled(_) => "cancelled",
-        _ => "failed",
+        AppError::Cancelled(_) => RunStatus::Cancelled,
+        _ => RunStatus::Failed,
     }
 }
 

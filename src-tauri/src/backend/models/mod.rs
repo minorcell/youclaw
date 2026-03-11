@@ -6,7 +6,7 @@ mod session;
 mod usage;
 mod ws;
 
-pub use common::{now_timestamp, role_to_string, string_to_role};
+pub use common::{now_timestamp, MessageRole, RunStatus};
 pub use config::{
     AgentActiveHoursConfig, AgentConfigPayload, AgentConfigUpdateRequest, AgentHeartbeatConfig,
 };

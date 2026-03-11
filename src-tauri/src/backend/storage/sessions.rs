@@ -152,10 +152,11 @@ impl StorageService {
         )?;
         let rows = stmt.query_map([], |row| {
             let parts_json = row.get::<_, String>(3)?;
+            let role_raw = row.get::<_, String>(2)?;
             Ok(ChatMessage {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                role: row.get(2)?,
+                role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
                 run_id: row.get(4)?,
                 created_at: row.get(5)?,
@@ -174,10 +175,11 @@ impl StorageService {
         )?;
         let rows = stmt.query_map([session_id], |row| {
             let parts_json = row.get::<_, String>(3)?;
+            let role_raw = row.get::<_, String>(2)?;
             Ok(ChatMessage {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                role: row.get(2)?,
+                role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
                 run_id: row.get(4)?,
                 created_at: row.get(5)?,
@@ -202,10 +204,11 @@ impl StorageService {
         )?;
         let rows = stmt.query_map([session_id], |row| {
             let parts_json = row.get::<_, String>(3)?;
+            let role_raw = row.get::<_, String>(2)?;
             Ok(ChatMessage {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                role: row.get(2)?,
+                role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
                 run_id: row.get(4)?,
                 created_at: row.get(5)?,
@@ -303,10 +306,11 @@ impl StorageService {
         )?;
         let rows = stmt.query_map([run_id], |row| {
             let parts_json = row.get::<_, String>(3)?;
+            let role_raw = row.get::<_, String>(2)?;
             Ok(ChatMessage {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                role: row.get(2)?,
+                role: parse_message_role_column(&role_raw, 2)?,
                 parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
                 run_id: row.get(4)?,
                 created_at: row.get(5)?,
@@ -328,7 +332,7 @@ impl StorageService {
                 params![
                     message.id,
                     message.session_id,
-                    message.role,
+                    message.role.as_str(),
                     serde_json::to_string(&message.parts_json)?,
                     message.run_id,
                     message.created_at,
@@ -371,10 +375,11 @@ impl StorageService {
              ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
+            let status_raw = row.get::<_, String>(2)?;
             Ok(ChatRun {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
-                status: row.get(2)?,
+                status: parse_run_status_column(&status_raw, 2)?,
                 user_message: row.get(3)?,
                 output_text: row.get(4)?,
                 created_at: row.get(5)?,
@@ -393,7 +398,7 @@ impl StorageService {
             params![
                 run.id,
                 run.session_id,
-                run.status,
+                run.status.as_str(),
                 run.user_message,
                 run.output_text,
                 run.created_at,
@@ -407,7 +412,7 @@ impl StorageService {
     pub fn update_run(
         &self,
         run_id: &str,
-        status: &str,
+        status: RunStatus,
         output_text: Option<&str>,
         error_message: Option<&str>,
     ) -> AppResult<ChatRun> {
@@ -417,17 +422,18 @@ impl StorageService {
             "UPDATE chat_runs
              SET status = ?2, output_text = COALESCE(?3, output_text), error_message = ?4, finished_at = ?5
              WHERE id = ?1",
-            params![run_id, status, output_text, error_message, finished_at],
+            params![run_id, status.as_str(), output_text, error_message, finished_at],
         )?;
         conn.query_row(
             "SELECT id, session_id, status, user_message, output_text, created_at, finished_at, error_message
              FROM chat_runs WHERE id = ?1",
             [run_id],
             |row| {
+                let status_raw = row.get::<_, String>(2)?;
                 Ok(ChatRun {
                     id: row.get(0)?,
                     session_id: row.get(1)?,
-                    status: row.get(2)?,
+                    status: parse_run_status_column(&status_raw, 2)?,
                     user_message: row.get(3)?,
                     output_text: row.get(4)?,
                     created_at: row.get(5)?,
@@ -580,4 +586,30 @@ impl StorageService {
             last_opened_session_id: self.get_last_opened_session_id()?,
         })
     }
+}
+
+fn parse_message_role_column(value: &str, column: usize) -> rusqlite::Result<MessageRole> {
+    value.parse::<MessageRole>().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid message role `{value}`"),
+            )),
+        )
+    })
+}
+
+fn parse_run_status_column(value: &str, column: usize) -> rusqlite::Result<RunStatus> {
+    value.parse::<RunStatus>().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid run status `{value}`"),
+            )),
+        )
+    })
 }

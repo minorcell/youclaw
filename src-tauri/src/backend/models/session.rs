@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::backend::errors::AppResult;
 
-use super::{now_timestamp, role_to_string, string_to_role};
+use super::{now_timestamp, MessageRole, RunStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSession {
@@ -21,7 +21,7 @@ pub struct ChatSession {
 pub struct ChatMessage {
     pub id: String,
     pub session_id: String,
-    pub role: String,
+    pub role: MessageRole,
     pub parts_json: Value,
     pub run_id: Option<String>,
     pub created_at: String,
@@ -45,7 +45,7 @@ pub struct ToolApproval {
 pub struct ChatRun {
     pub id: String,
     pub session_id: String,
-    pub status: String,
+    pub status: RunStatus,
     pub user_message: String,
     pub output_text: String,
     pub created_at: String,
@@ -102,7 +102,7 @@ pub fn new_chat_run(session_id: impl Into<String>, text: impl Into<String>) -> C
     ChatRun {
         id: Uuid::new_v4().to_string(),
         session_id: session_id.into(),
-        status: "running".to_string(),
+        status: RunStatus::Running,
         user_message: text.into(),
         output_text: String::new(),
         created_at: now_timestamp(),
@@ -119,7 +119,7 @@ pub fn new_user_chat_message(
     ChatMessage {
         id: Uuid::new_v4().to_string(),
         session_id: session_id.into(),
-        role: "user".to_string(),
+        role: MessageRole::User,
         parts_json: json!([ContentPart::Text(text.into())]),
         run_id: Some(run_id.into()),
         created_at: now_timestamp(),
@@ -168,7 +168,7 @@ pub fn record_from_message(
     Ok(ChatMessage {
         id: Uuid::new_v4().to_string(),
         session_id: session_id.to_string(),
-        role: role_to_string(message.role()).to_string(),
+        role: MessageRole::from(message.role()),
         parts_json: serde_json::to_value(message.parts())?,
         run_id: Some(run_id.to_string()),
         created_at: now_timestamp(),
@@ -176,7 +176,7 @@ pub fn record_from_message(
 }
 
 pub fn message_from_record(record: &ChatMessage) -> AppResult<Message> {
-    let role = string_to_role(&record.role)?;
+    let role: aquaregia::MessageRole = record.role.into();
     let parts = serde_json::from_value::<Vec<ContentPart>>(record.parts_json.clone())?;
     Message::new(role, parts)
         .map_err(|err| crate::backend::errors::AppError::Validation(err.to_string()))
