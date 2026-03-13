@@ -1,6 +1,6 @@
 # AGENTS.md - Agent 编码指南
 
-本文档为在此代码库工作的 AI agent 提供编码规范。
+本文档为在此代码库工作的 AI agent 提供统一规范。目标是：简约、一致、可维护、低开销。
 
 ## 项目概述
 
@@ -10,31 +10,21 @@
 - **后端**: Rust + axum WebSocket 服务器, rusqlite
 - **Agent 运行时**: 本地 aquaregia 依赖
 
-## 构建命令
+## 常用命令
 
 ### 前端 (React/TypeScript)
 
 ```bash
-# 安装依赖
 pnpm install
-
-# 启动前端开发服务器
 pnpm dev
-
-# 构建前端 (运行 tsc + vite build)
 pnpm build
-
-# 预览生产构建
 pnpm preview
 ```
 
 ### 桌面应用 (Tauri)
 
 ```bash
-# 启动 Tauri 开发模式 (前端 + 桌面外壳)
 pnpm tauri dev
-
-# 构建 Tauri 应用
 pnpm tauri build
 ```
 
@@ -42,125 +32,113 @@ pnpm tauri build
 
 ```bash
 cd src-tauri
-
-# 检查 Rust 代码 (不构建)
 cargo check
-
-# 构建 release 版本
 cargo build --release
-
-# 运行测试
 cargo test
-
-# 运行单个测试
 cargo test <test_name>
-
-# 运行指定文件中的测试
 cargo test --test <test_file_name>
 ```
 
-### 类型检查
+### 轻量校验（默认优先）
 
 ```bash
-# TypeScript 类型检查
-pnpm build  # 运行 tsc && vite build
-
-# 或直接运行
 npx tsc --noEmit
+cd src-tauri && cargo check
 ```
 
-## 代码风格规范
+## 核心原则
 
-### TypeScript/React
+1. **简约至上**
+   - 非必要不使用边框与大间距。
+   - 优先通过留白、层级、对比来表达结构。
 
-1. **导入**
-   - 使用路径别名 `@/` 进行内部导入 (如 `@/components`, `@/lib`, `@/store`, `@/pages`)
-   - 顺序: 外部库 → 内部模块 → 类型
-   - 使用 `type` 关键字进行类型导入
+2. **主题优先**
+   - 尽可能使用系统主题变量和主题系统。
+   - 避免硬编码颜色（hex/rgb/固定色类名），状态色也优先 token 化。
 
-2. **组件**
-   - 使用函数式组件 + TypeScript
-   - 优先使用显式 prop 类型标注而非类型推断
-   - 使用 `cva` (class-variance-authority) 处理组件变体
-   - 使用 `cn` 工具 (tailwind-merge + clsx) 组合 class
-   - UI 风格保持主题一致，减少线条的使用。
+3. **组件优先复用**
+   - 优先使用 shadcn/ui 组件，避免重复造基础组件。
 
-3. **命名**
-   - 组件和类型使用 PascalCase
-   - 函数、变量和文件使用 camelCase (页面文件夹使用 `-`)
-   - 布尔变量使用 `is`, `has`, `should` 等前缀
+4. **低开销验证**
+   - 非必要不要每次完整构建。
+   - 默认使用轻量检查（`tsc --noEmit`、`cargo check`）。
+   - 仅在发布前、验证构建链路、或打包行为变更时执行完整构建。
 
-4. **状态管理**
-   - 使用 Zustand 管理全局状态
-   - 状态文件放在 `src/store/`
+## TypeScript / React 规范
 
-5. **错误处理**
-   - async 函数使用 try/catch
-   - fire-and-forget 的异步调用使用 `void` 前缀
-   - 处理 `unknown` 类型错误时进行显式类型转换 (如 `String(error)`)
+1. **导入规范**
+   - 使用路径别名 `@/`（如 `@/components`, `@/lib`, `@/store`, `@/pages`）。
+   - 导入顺序：外部库 -> 内部模块 -> 类型。
+   - 类型导入使用 `type`。
 
-6. **类型**
-   - tsconfig 启用 strict 模式
-   - 避免使用 `any`, 不确定类型时使用 `unknown`
-   - 使用 `Extract` 工具类型处理可辨识联合
+2. **命名规范**
+   - 组件、类型：PascalCase。
+   - 函数、变量、文件：camelCase（页面目录可使用 `-`）。
+   - 布尔值使用 `is`、`has`、`should` 前缀。
 
-7. **常量与魔法数字**
-   - 禁止使用魔法数字 (如 `if (status === 3)`)
-   - 禁止硬编码配置值 (如超时、阈值、延迟等)
-   - 使用命名常量或配置文件集中管理可配置值
-   - 创建 `src/lib/constants.ts` 存放应用级常量
+3. **类型与错误处理**
+   - 使用 strict 模式思维编写代码。
+   - 避免 `any`，未知类型使用 `unknown`。
+   - 使用 `Extract` 等工具类型处理可辨识联合。
+   - 异步函数使用 `try/catch`。
+   - fire-and-forget 调用使用 `void` 前缀。
+   - 处理 `unknown` 错误时显式转换（如 `String(error)`）。
 
-8. **组件原则**
-   - 优先使用 shadcn/ui 组件，避免手写基础 UI 组件
-   - 每个组件文件不超过 500 行，超出则进行模块化拆分
-   - 保持组件单一职责，复杂逻辑抽取到 custom hooks 或 utils
-   - 大型组件内部按功能分区 (如 `// --- render sections ---`)
+4. **状态管理与性能**
+   - 全局状态使用 Zustand，状态文件放在 `src/store/`。
+   - 使用 selector 降低不必要渲染。
+   - 大列表优先虚拟化（`virtua` / `react-window`）。
+   - 高频更新状态优先 `useRef` 或局部状态。
+   - 避免在 render 路径做昂贵计算，必要时使用 `useMemo` / `useCallback`。
 
-9. **性能与状态**
-   - 合理使用 Zustand selectors 避免不必要渲染
-   - 大列表使用虚拟化 (如 `virtua` 或 `react-window`)
-   - 频繁更新的状态考虑使用 `useRef` 或局部状态
-   - 避免在 render 路径中进行昂贵计算，必要时使用 `useMemo`/`useCallback`
+5. **组件设计**
+   - 保持单一职责，复杂逻辑抽到 hooks 或 utils。
+   - 每个组件文件尽量不超过 500 行，超出需拆分。
+   - 大组件按功能分区（如 `// --- render sections ---`）。
 
-### Rust
+6. **常量与配置**
+   - 禁止魔法数字和硬编码阈值/超时。
+   - 使用命名常量或集中配置管理。
+   - 应用级常量放在 `src/lib/constants.ts`。
+
+7. **样式约定**
+   - 使用 Tailwind CSS v4 + `@tailwindcss/vite`。
+   - 使用 `cn()` 组合条件类。
+   - 保持与现有 shadcn 风格一致。
+
+## Rust 规范
 
 1. **命名**
-   - 变量、函数、模块使用 snake_case
-   - 类型和 trait 使用 PascalCase
-   - 常量使用 SCREAMING_SNAKE_CASE
+   - 变量、函数、模块：snake_case。
+   - 类型、trait：PascalCase。
+   - 常量：SCREAMING_SNAKE_CASE。
 
 2. **错误处理**
-   - 使用 `thiserror` 定义错误类型
-   - 使用 `?` 操作符传播可处理错误
-   - 使用 `.map_err(|e| ...)` 包装错误并添加上下文
+   - 使用 `thiserror` 定义错误类型。
+   - 使用 `?` 传播可处理错误。
+   - 使用 `.map_err(|e| ...)` 包装并补充上下文。
 
 3. **异步**
-   - 使用 `tokio` 作为异步运行时
-   - 异步函数使用 `async fn`
-   - 谨慎使用 `block_on` (仅在同步入口点使用)
+   - 使用 `tokio` 作为异步运行时。
+   - 异步函数使用 `async fn`。
+   - `block_on` 仅用于同步入口。
 
 4. **依赖**
-   - 使用 `serde` derive 宏进行序列化
-   - 使用 `axum` 构建 WebSocket 服务器
-   - 使用 `rusqlite` (bundled feature) 操作 SQLite
+   - 使用 `serde` derive 处理序列化。
+   - 使用 `axum` 构建 WebSocket 服务器。
+   - 使用 `rusqlite`（bundled feature）操作 SQLite。
 
-### Tailwind CSS
+## 通用模式
 
-- 使用 Tailwind CSS v4 配合 `@tailwindcss/vite`
-- 使用 `cn()` 工具处理条件类
-- 遵循 shadcn/ui 组件样式模式
+1. **文件组织**
+   - 每个文件一个主要导出。
+   - 使用 `index.ts` 做桶导出。
+   - 相关文件按目录聚合。
 
-### 通用模式
+2. **副作用清理**
+   - 在 `useEffect` 中返回清理函数取消订阅。
+   - 使用 disposed 标志避免组件卸载后状态更新。
 
-1. **文件**
-   - 每个文件一个主要导出
-   - 使用 `index.ts` 做桶导出
-   - 相关文件按目录分组
-
-2. **清理函数**
-   - 使用 `useEffect` 清理函数处理订阅取消
-   - 设置 disposed 标志防止组件卸载后状态更新
-
-3. **WebSocket**
-   - 处理连接状态 (idle, connecting, open, closed, error)
-   - 实现指数退避重连逻辑
+3. **WebSocket 约定**
+   - 覆盖连接状态：idle / connecting / open / closed / error。
+   - 实现指数退避重连策略。
