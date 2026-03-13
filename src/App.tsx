@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect } from 'react'
-import { RouterProvider, createHashRouter } from 'react-router-dom'
+import { Navigate, RouterProvider, createHashRouter } from 'react-router-dom'
 
 import { AppLayout } from '@/components/layouts'
 import { ToastProvider } from '@/contexts/toast-context'
@@ -8,8 +8,8 @@ import { setAppClient } from '@/lib/app-client'
 import { applyTheme } from '@/lib/theme'
 import { AppWsClient } from '@/lib/ws-client'
 import { ChatPage } from '@/pages/chat'
+import { SettingsLayoutPage, SettingsSectionPage } from '@/pages/settings'
 import { HomeRedirectPage, ProviderOnboardingPage } from '@/pages/welcome'
-import { SettingsPage } from '@/pages/settings'
 import { useAppStore } from '@/store/app-store'
 import { useSettingsStore } from '@/store/settings-store'
 
@@ -30,11 +30,29 @@ const router = createHashRouter([
         path: 'chat/:sessionId',
         element: <ChatPage />,
       },
+      {
+        path: 'chat',
+        element: <HomeRedirectPage />,
+      },
+      {
+        path: 'settings',
+        element: <SettingsLayoutPage />,
+        children: [
+          {
+            index: true,
+            element: <Navigate replace to='theme' />,
+          },
+          {
+            path: ':settingsSection',
+            element: <SettingsSectionPage />,
+          },
+          {
+            path: '*',
+            element: <Navigate replace to='theme' />,
+          },
+        ],
+      },
     ],
-  },
-  {
-    path: '/settings',
-    element: <SettingsPage />,
   },
 ])
 

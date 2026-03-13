@@ -65,6 +65,15 @@ const fontSizeOptions: FontSizeOption[] = [
 
 const FONT_SIZE_MIN = fontSizeOptions[0].sliderValue
 const FONT_SIZE_MAX = fontSizeOptions[fontSizeOptions.length - 1].sliderValue
+const MODE_CARD_BASE_CLASS = 'h-full min-h-32 rounded-xl p-3 transition-colors'
+const PRESET_CARD_BASE_CLASS = 'h-full min-h-10 rounded-md px-2 py-1.5 transition-colors'
+
+function getSelectableCardClass(isSelected: boolean, compact = false): string {
+  return cn(
+    compact ? PRESET_CARD_BASE_CLASS : MODE_CARD_BASE_CLASS,
+    isSelected ? 'bg-accent/60' : 'bg-background/85 hover:bg-accent/25',
+  )
+}
 
 export function ThemeSettingsSection({
   mode,
@@ -87,41 +96,73 @@ export function ThemeSettingsSection({
           选择系统主视觉模式。切换到自定义配色后，可在下方选择主题预设。
         </CardDescription>
       </CardHeader>
-      <CardContent className='space-y-4 py-4'>
+      <CardContent className='space-y-4 pb-2'>
         <RadioGroup
-          className='grid gap-3 sm:grid-cols-3'
+          className='grid auto-rows-fr gap-3 sm:grid-cols-3'
           onValueChange={(value) => onModeChange(value)}
           value={mode}
         >
           {modeOptions.map((item) => {
             const Icon = item.icon
             const inputId = `theme-mode-${item.id}`
+            const isSelected = mode === item.id
             return (
-              <Label className='block cursor-pointer' htmlFor={inputId} key={item.id}>
-                <div
-                  className={cn(
-                    'h-full rounded-xl p-3 transition-colors',
-                    mode === item.id ? 'bg-accent/45' : 'bg-background/85 hover:bg-accent/20',
-                  )}
-                >
+              <Label className='block h-full cursor-pointer' htmlFor={inputId} key={item.id}>
+                <div className={cn(getSelectableCardClass(isSelected), 'flex flex-col')}>
                   <div className='flex items-start justify-between gap-3'>
                     <span
                       className={cn(
                         'inline-flex size-8 items-center justify-center rounded-lg',
-                        mode === item.id ? 'bg-background' : 'bg-background/70',
+                        isSelected ? 'bg-background' : 'bg-background/70',
                       )}
                     >
                       <Icon className='h-4 w-4 text-muted-foreground' />
                     </span>
                     <RadioGroupItem id={inputId} value={item.id} />
                   </div>
-                  <p className='mt-3 text-sm font-medium'>{item.label}</p>
-                  <p className='mt-1 text-xs text-muted-foreground'>{item.description}</p>
+                  <div className='mt-3'>
+                    <p className='text-sm font-medium'>{item.label}</p>
+                    <p className='mt-1 text-xs text-muted-foreground'>{item.description}</p>
+                  </div>
                 </div>
               </Label>
             )
           })}
         </RadioGroup>
+
+        {mode === 'custom' ? (
+          <RadioGroup
+            className='grid auto-rows-fr gap-2 sm:grid-cols-4'
+            onValueChange={(value) => onPresetChange(value as ThemePresetId)}
+            value={preset}
+          >
+            {themePresets.map((item) => (
+              <Label
+                className='block h-full cursor-pointer'
+                htmlFor={`theme-preset-${item.id}`}
+                key={item.id}
+              >
+                <div
+                  className={cn(
+                    getSelectableCardClass(preset === item.id, true),
+                    'flex items-center justify-between gap-2',
+                  )}
+                >
+                  <div className='min-w-0 flex-1'>
+                    <p className='truncate text-xs font-medium'>{item.label}</p>
+                  </div>
+                  <div className='flex items-center gap-1.5'>
+                    <PresetSwatch color={item.palette.background} compact />
+                    <PresetSwatch color={item.palette.card} compact />
+                    <PresetSwatch color={item.palette.primary} compact />
+                    <PresetSwatch color={item.palette.accent} compact />
+                    <RadioGroupItem id={`theme-preset-${item.id}`} value={item.id} />
+                  </div>
+                </div>
+              </Label>
+            ))}
+          </RadioGroup>
+        ) : null}
 
         <div className='space-y-3 rounded-xl bg-background/85 p-3'>
           <div className='flex items-center justify-between gap-3'>
@@ -175,58 +216,15 @@ export function ThemeSettingsSection({
           <Switch checked={useSerif} onCheckedChange={onUseSerifChange} />
         </div>
       </CardContent>
-
-      {mode === 'custom' ? (
-        <>
-          <div className='space-y-4 px-4 py-4'>
-            <div>
-              <p className='text-base font-medium'>预设主题配色</p>
-              <p className='text-sm text-muted-foreground'>
-                选择系统内置配色方案，快速统一全站视觉风格。
-              </p>
-            </div>
-            <RadioGroup
-              className='grid gap-3 xl:grid-cols-3'
-              onValueChange={(value) => onPresetChange(value as ThemePresetId)}
-              value={preset}
-            >
-              {themePresets.map((item) => (
-                <Label
-                  className='block cursor-pointer'
-                  htmlFor={`theme-preset-${item.id}`}
-                  key={item.id}
-                >
-                  <div
-                    className={cn(
-                      'h-full rounded-xl p-3 transition-colors',
-                      preset === item.id ? 'bg-accent/45' : 'bg-background/85 hover:bg-accent/20',
-                    )}
-                  >
-                    <div className='flex items-start justify-between gap-3'>
-                      <div>
-                        <p className='text-sm font-medium'>{item.label}</p>
-                        <p className='mt-1 text-xs text-muted-foreground'>{item.description}</p>
-                      </div>
-                      <RadioGroupItem id={`theme-preset-${item.id}`} value={item.id} />
-                    </div>
-
-                    <div className='mt-3 flex items-center gap-2'>
-                      <PresetSwatch color={item.palette.background} />
-                      <PresetSwatch color={item.palette.card} />
-                      <PresetSwatch color={item.palette.primary} />
-                      <PresetSwatch color={item.palette.accent} />
-                    </div>
-                  </div>
-                </Label>
-              ))}
-            </RadioGroup>
-          </div>
-        </>
-      ) : null}
     </Card>
   )
 }
 
-function PresetSwatch({ color }: { color: string }) {
-  return <span className='h-5 w-5 rounded-full' style={{ backgroundColor: color }} />
+function PresetSwatch({ color, compact = false }: { color: string; compact?: boolean }) {
+  return (
+    <span
+      className={cn('rounded-full', compact ? 'h-3 w-3' : 'h-4 w-4')}
+      style={{ backgroundColor: color }}
+    />
+  )
 }

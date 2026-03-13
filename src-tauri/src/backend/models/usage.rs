@@ -47,11 +47,6 @@ pub struct UsageLogDetailRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsageSettingsUpdateRequest {
-    pub detail_logging_enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsagePage {
     pub page: u32,
     pub page_size: u32,
@@ -71,11 +66,6 @@ pub struct UsageSummaryPayload {
     pub total_tokens: u64,
     pub input_cache_read_tokens: u64,
     pub input_cache_write_tokens: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UsageSettingsPayload {
-    pub detail_logging_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

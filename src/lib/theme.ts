@@ -37,6 +37,14 @@ const CUSTOM_THEME_VARS = [
   '--sidebar-accent-foreground',
   '--sidebar-border',
   '--sidebar-ring',
+  '--layout',
+  '--layout-foreground',
+  '--layout-primary',
+  '--layout-primary-foreground',
+  '--layout-accent',
+  '--layout-accent-foreground',
+  '--layout-border',
+  '--layout-ring',
 ] as const
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -50,20 +58,48 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   }
 }
 
-function contrastColor(background: string): string {
+function rgbToHex({ r, g, b }: { r: number; g: number; b: number }): string {
+  const toHex = (value: number) => value.toString(16).padStart(2, '0')
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+}
+
+function invertHex(hex: string): string | null {
+  const rgb = hexToRgb(hex)
+  if (!rgb) return null
+  return rgbToHex({
+    r: 255 - rgb.r,
+    g: 255 - rgb.g,
+    b: 255 - rgb.b,
+  })
+}
+
+function contrastColor(background: string, preferredForeground: string): string {
   const rgb = hexToRgb(background)
-  if (!rgb) return '#f5f5f5'
+  const foregroundRgb = hexToRgb(preferredForeground)
+  if (!rgb || !foregroundRgb) return preferredForeground
+  const backgroundBrightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000
+  const foregroundBrightness =
+    (foregroundRgb.r * 299 + foregroundRgb.g * 587 + foregroundRgb.b * 114) / 1000
+  if (Math.abs(backgroundBrightness - foregroundBrightness) >= 95) {
+    return preferredForeground
+  }
+  return invertHex(preferredForeground) ?? preferredForeground
+}
+
+function isDarkColor(background: string): boolean {
+  const rgb = hexToRgb(background)
+  if (!rgb) return false
   const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000
-  return brightness > 145 ? '#161616' : '#f5f5f5'
+  return brightness <= 145
 }
 
 function applyCustomTheme(palette: CustomThemePalette) {
   const root = document.documentElement
   const foreground = palette.foreground
-  const primaryForeground = contrastColor(palette.primary)
-  const cardForeground = contrastColor(palette.card)
-  const accentForeground = contrastColor(palette.accent)
-  const sidebarForeground = contrastColor(palette.sidebar)
+  const primaryForeground = contrastColor(palette.primary, foreground)
+  const cardForeground = contrastColor(palette.card, foreground)
+  const accentForeground = contrastColor(palette.accent, foreground)
+  const sidebarForeground = contrastColor(palette.sidebar, foreground)
 
   root.style.setProperty('--background', palette.background)
   root.style.setProperty('--foreground', foreground)
@@ -91,6 +127,15 @@ function applyCustomTheme(palette: CustomThemePalette) {
   root.style.setProperty('--sidebar-accent-foreground', accentForeground)
   root.style.setProperty('--sidebar-border', palette.border)
   root.style.setProperty('--sidebar-ring', palette.primary)
+
+  root.style.setProperty('--layout', palette.sidebar)
+  root.style.setProperty('--layout-foreground', sidebarForeground)
+  root.style.setProperty('--layout-primary', palette.primary)
+  root.style.setProperty('--layout-primary-foreground', primaryForeground)
+  root.style.setProperty('--layout-accent', palette.accent)
+  root.style.setProperty('--layout-accent-foreground', accentForeground)
+  root.style.setProperty('--layout-border', palette.border)
+  root.style.setProperty('--layout-ring', palette.primary)
 }
 
 function clearCustomTheme() {
@@ -126,5 +171,6 @@ export function applyTheme(
   root.style.colorScheme = 'light'
   if (mode === 'custom') {
     applyCustomTheme(customTheme)
+    root.style.colorScheme = isDarkColor(customTheme.background) ? 'dark' : 'light'
   }
 }

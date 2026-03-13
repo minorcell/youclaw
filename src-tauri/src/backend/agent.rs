@@ -21,10 +21,10 @@ use crate::backend::agents::tools::{
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     now_timestamp, record_from_message, title_from_first_prompt, AgentMemoryCompactedPayload,
-    ChatMessage, ChatTurn, ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload,
-    TurnCancelledPayload, TurnFailedPayload, TurnFinishedPayload, TurnStartedPayload, TurnStatus,
-    StepFinishedPayload, StepStartedPayload, TokenPayload, ToolFinishedPayload,
-    ToolRequestedPayload,
+    ChatMessage, ChatTurn, ReasoningFinishedPayload, ReasoningStartedPayload,
+    ReasoningTokenPayload, StepFinishedPayload, StepStartedPayload, TokenPayload,
+    ToolFinishedPayload, ToolRequestedPayload, TurnCancelledPayload, TurnFailedPayload,
+    TurnFinishedPayload, TurnStartedPayload, TurnStatus,
 };
 use crate::backend::provider::normalize_openai_compatible_endpoint;
 use crate::backend::BackendState;
@@ -45,7 +45,9 @@ pub fn spawn_turn(state: BackendState, turn: ChatTurn) {
                     .storage
                     .update_turn(&turn_id, err_status(&err), None, Some(&err.message()))
             {
-                let _ = state.storage.update_turn_usage_metric(&updated_turn, None, None);
+                let _ = state
+                    .storage
+                    .update_turn_usage_metric(&updated_turn, None, None);
             }
             let payload = if matches!(err, AppError::Cancelled(_)) {
                 serde_json::to_value(TurnCancelledPayload {
@@ -92,8 +94,9 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
     let keep_recent = config.keep_recent as usize;
 
     let (normalized_base_url, chat_path) = normalize_openai_compatible_endpoint(&provider.base_url);
-    let builder =
-        LlmClient::openai_compatible(normalized_base_url).api_key(provider.api_key.clone());
+    let builder = LlmClient::openai_compatible(normalized_base_url)
+        .api_key(provider.api_key.clone())
+        .think_tag_parsing(true);
     let client = if let Some(path) = chat_path {
         builder.chat_completions_path(path).build()?
     } else {
@@ -232,10 +235,11 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
             };
             emit_step_finished(&state, &turn, &step_state)?;
             completed_step_count += 1;
-            let _ =
-                state
-                    .storage
-                    .update_turn_usage_metric(&turn, Some(&usage_total), Some(completed_step_count));
+            let _ = state.storage.update_turn_usage_metric(
+                &turn,
+                Some(&usage_total),
+                Some(completed_step_count),
+            );
             final_output = step_output.text;
             finished = true;
             break;
@@ -264,10 +268,11 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         };
         emit_step_finished(&state, &turn, &step_state)?;
         completed_step_count += 1;
-        let _ =
-            state
-                .storage
-                .update_turn_usage_metric(&turn, Some(&usage_total), Some(completed_step_count));
+        let _ = state.storage.update_turn_usage_metric(
+            &turn,
+            Some(&usage_total),
+            Some(completed_step_count),
+        );
     }
 
     if !finished {
@@ -543,7 +548,8 @@ async fn handle_tool_calls(
             },
         )?;
         let tool_message = Message::tool_result(tool_result.clone());
-        let persisted_tool_message = record_from_message(&turn.session_id, &turn.id, &tool_message)?;
+        let persisted_tool_message =
+            record_from_message(&turn.session_id, &turn.id, &tool_message)?;
         messages.push(tool_message);
         new_persisted_messages.push(persisted_tool_message);
         tool_results.push(tool_result);
@@ -998,10 +1004,9 @@ pub fn start_turn(state: BackendState, session_id: String, text: String) -> AppR
     } else {
         None
     };
-    let detail_logged = state.storage.get_usage_detail_logging_enabled()?;
     state
         .storage
-        .insert_turn_usage_metric_start(&turn, provider.as_ref(), detail_logged)?;
+        .insert_turn_usage_metric_start(&turn, provider.as_ref())?;
     state.storage.insert_message(&user_message)?;
     state.publish_sessions_changed()?;
     state.ws_hub.emit_turn_event(

@@ -353,10 +353,6 @@ export interface UsageSummaryPayload {
   input_cache_write_tokens: number
 }
 
-export interface UsageSettingsPayload {
-  detail_logging_enabled: boolean
-}
-
 export interface UsageLogItem {
   turn_id: string
   session_id: string

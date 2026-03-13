@@ -1,25 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { GripVertical } from 'lucide-react'
-import {
-  Navigate,
-  Outlet,
-  useLocation,
-  useNavigate,
-  useParams,
-  useSearchParams,
-} from 'react-router-dom'
+import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { SessionSidebar } from '@/components/layouts/sidebar'
-import { SettingsModal } from '@/pages/settings'
+import { DEFAULT_SETTINGS_SECTION } from '@/pages/settings/sections'
 import { getAppClient } from '@/lib/app-client'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
 import { cn } from '@/lib/utils'
 import { LoadingScreen } from '@/pages/welcome'
 import { useAppStore } from '@/store/app-store'
 
-const SIDEBAR_DEFAULT_WIDTH = 330
 const SIDEBAR_MIN_WIDTH = 260
 const SIDEBAR_MAX_WIDTH = 520
+const SIDEBAR_DEFAULT_WIDTH = SIDEBAR_MIN_WIDTH
 const CONTENT_MIN_WIDTH = 560
 const SIDEBAR_RESIZE_STEP = 24
 const SIDEBAR_HANDLE_HITBOX = 16
@@ -32,14 +25,14 @@ export function AppLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const params = useParams<{ sessionId?: string }>()
-  const [searchParams, setSearchParams] = useSearchParams()
   const shellRef = useRef<HTMLDivElement | null>(null)
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const resizeAnimationFrameRef = useRef<number | null>(null)
   const pendingSidebarWidthRef = useRef<number | null>(null)
 
   const sessionIdFromRoute = params.sessionId ?? null
-  const isSettingsOpen = searchParams.get('settings') === '1'
+  const isSettingsPage =
+    location.pathname === '/settings' || location.pathname.startsWith('/settings/')
 
   const initialized = useAppStore((state) => state.initialized)
   const providerAccounts = useAppStore((state) => state.providerAccounts)
@@ -55,6 +48,7 @@ export function AppLayout() {
   )
 
   const selectedSidebarSessionId = sessionIdFromRoute ?? activeSessionId ?? sessions[0]?.id ?? null
+  const contentRouteKey = sessionIdFromRoute ? `chat:${sessionIdFromRoute}` : location.pathname
 
   function getSidebarMaxWidth() {
     const shellWidth = shellRef.current?.clientWidth
@@ -137,14 +131,8 @@ export function AppLayout() {
     return <Navigate replace to='/welcome/provider' />
   }
 
-  function updateSettingsQuery(nextOpen: boolean) {
-    const nextParams = new URLSearchParams(searchParams)
-    if (nextOpen) {
-      nextParams.set('settings', '1')
-    } else {
-      nextParams.delete('settings')
-    }
-    setSearchParams(nextParams, { replace: !nextOpen })
+  function buildChatPath(targetSessionId: string): string {
+    return `/chat/${targetSessionId}`
   }
 
   async function handleCreateSession() {
@@ -159,8 +147,7 @@ export function AppLayout() {
     })
 
     navigate({
-      pathname: `/chat/${created.id}`,
-      search: isSettingsOpen ? '?settings=1' : '',
+      pathname: buildChatPath(created.id),
     })
   }
 
@@ -170,7 +157,7 @@ export function AppLayout() {
     })
 
     if (targetSessionId === sessionIdFromRoute) {
-      navigate({ pathname: '/', search: isSettingsOpen ? '?settings=1' : '' })
+      navigate({ pathname: '/' })
     }
   }
 
@@ -183,8 +170,7 @@ export function AppLayout() {
 
   function handleSelectSession(targetSessionId: string) {
     navigate({
-      pathname: `/chat/${targetSessionId}`,
-      search: isSettingsOpen ? '?settings=1' : '',
+      pathname: buildChatPath(targetSessionId),
     })
   }
 
@@ -239,10 +225,14 @@ export function AppLayout() {
         <div className='min-h-0 overflow-hidden'>
           <SessionSidebar
             activeSessionId={selectedSidebarSessionId}
-            activeView={isSettingsOpen ? 'settings' : 'chat'}
+            activeView={isSettingsPage ? 'settings' : 'chat'}
             onCreateSession={() => void handleCreateSession()}
             onDeleteSession={(id) => void handleDeleteSession(id)}
-            onOpenSettings={() => updateSettingsQuery(true)}
+            onOpenSettings={() =>
+              navigate({
+                pathname: `/settings/${DEFAULT_SETTINGS_SECTION}`,
+              })
+            }
             onRenameSession={handleRenameSession}
             onSelectSession={handleSelectSession}
             providers={providers}
@@ -252,7 +242,7 @@ export function AppLayout() {
 
         <section
           className='min-h-0 select-none overflow-hidden rounded-l-xl bg-background/85'
-          key={location.pathname}
+          key={contentRouteKey}
         >
           <Outlet />
         </section>
@@ -280,8 +270,6 @@ export function AppLayout() {
           <GripVertical className='h-3.5 w-3.5' />
         </button>
       </div>
-
-      <SettingsModal onOpenChange={updateSettingsQuery} open={isSettingsOpen} />
     </main>
   )
 }

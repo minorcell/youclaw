@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, MessageSquare, ShieldCheck } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -116,7 +115,7 @@ export function ProviderOnboardingPage() {
     <main className='box-border flex min-h-dvh flex-col items-center justify-center bg-background px-4 py-12 text-foreground'>
       {/* Brand */}
       <div className='mb-10 select-none text-center'>
-        <h1 className='mt-2 font-serif text-[3.2rem] font-semibold leading-none tracking-tight text-[#224c37]'>
+        <h1 className='mt-2 font-serif text-[3.2rem] font-semibold leading-none tracking-tight text-primary'>
           成为你，YouClaw
         </h1>
         <p className='mt-3 text-sm text-muted-foreground'>连接 AI 模型，开始与“你”协作</p>

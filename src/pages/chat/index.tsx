@@ -6,6 +6,7 @@ import { ChatComposer } from '@/pages/chat/components/chat-composer'
 import { MessageThread } from '@/pages/chat/components/message-thread'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { getAppClient } from '@/lib/app-client'
 import { partsToOutputText, partsToReasoningDisplay } from '@/lib/parts'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
@@ -400,56 +401,62 @@ export function ChatPage() {
   return (
     <div className='flex h-full min-h-0 flex-col bg-background/70'>
       <div className='relative flex-1 min-h-0'>
-        <div
-          ref={scrollContainerRef}
-          className='h-full select-none overflow-y-auto px-6 pb-72 pt-8 md:px-[9%]'
+        <ScrollArea
+          className='h-full select-none'
+          hideScrollbar
+          viewportClassName='no-scrollbar'
+          viewportRef={scrollContainerRef}
         >
-          <div className='select-text'>
-            <MessageThread
-              providerLabel={
-                activeProvider
-                  ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
-                  : 'YouClaw Agent'
-              }
-              turns={turnRenderUnits}
-            />
-          </div>
-
-          {pendingApprovals.length > 0 ? (
-            <div className='mt-6 space-y-3 select-text'>
-              {pendingApprovals.map((approval) => (
-                <Card
-                  className='max-w-[76ch] rounded-2xl border-border/70 bg-card/80 px-4 py-3 shadow-none'
-                  key={approval.id}
-                >
-                  <div className='flex items-center justify-between gap-2'>
-                    <p className='truncate text-sm font-medium text-foreground'>{approval.path}</p>
-                    <Badge>{approval.action}</Badge>
-                  </div>
-                  <pre className='mt-2 max-h-40 overflow-auto rounded-xl bg-muted/70 p-3 text-[11px] leading-5 text-foreground/80'>
-                    {approval.preview_json.diff ?? 'No diff preview'}
-                  </pre>
-                  <div className='mt-3 flex gap-2'>
-                    <button
-                      className='rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs hover:bg-muted'
-                      onClick={() => void handleResolveApproval(approval.id, true)}
-                      type='button'
-                    >
-                      允许
-                    </button>
-                    <button
-                      className='rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs hover:bg-muted'
-                      onClick={() => void handleResolveApproval(approval.id, false)}
-                      type='button'
-                    >
-                      拒绝
-                    </button>
-                  </div>
-                </Card>
-              ))}
+          <div className='px-6 pb-72 pt-8 md:px-[9%]'>
+            <div className='select-text'>
+              <MessageThread
+                providerLabel={
+                  activeProvider
+                    ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
+                    : 'YouClaw Agent'
+                }
+                turns={turnRenderUnits}
+              />
             </div>
-          ) : null}
-        </div>
+
+            {pendingApprovals.length > 0 ? (
+              <div className='mt-6 space-y-3 select-text'>
+                {pendingApprovals.map((approval) => (
+                  <Card
+                    className='max-w-[76ch] rounded-2xl border-border/70 bg-card/80 px-4 py-3 shadow-none'
+                    key={approval.id}
+                  >
+                    <div className='flex items-center justify-between gap-2'>
+                      <p className='truncate text-sm font-medium text-foreground'>
+                        {approval.path}
+                      </p>
+                      <Badge>{approval.action}</Badge>
+                    </div>
+                    <pre className='mt-2 max-h-40 overflow-auto rounded-xl bg-muted/70 p-3 text-[11px] leading-5 text-foreground/80'>
+                      {approval.preview_json.diff ?? 'No diff preview'}
+                    </pre>
+                    <div className='mt-3 flex gap-2'>
+                      <button
+                        className='rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs hover:bg-muted'
+                        onClick={() => void handleResolveApproval(approval.id, true)}
+                        type='button'
+                      >
+                        允许
+                      </button>
+                      <button
+                        className='rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs hover:bg-muted'
+                        onClick={() => void handleResolveApproval(approval.id, false)}
+                        type='button'
+                      >
+                        拒绝
+                      </button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </ScrollArea>
 
         <div className='pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-4'>
           <div className='pointer-events-auto w-full max-w-210 select-none'>

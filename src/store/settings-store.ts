@@ -2,9 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type ThemeMode = 'white' | 'black' | 'custom'
-export type ThemePresetId = 'grass-green' | 'desert-yellow'
+export type ThemePresetId = 'grass-green' | 'desert-yellow' | 'college-blue' | 'deep-sea-blue'
 export type ThemeFontSize = 'small' | 'medium' | 'large'
-export type SettingsSection = 'general' | 'memory' | 'providers' | 'usage'
+export type SettingsSection = 'general' | 'theme' | 'memory' | 'providers' | 'usage'
 export type SelectedProviderId = string | 'new'
 
 export interface CustomThemePalette {
@@ -28,32 +28,62 @@ export interface ThemePreset {
 export const themePresets: ThemePreset[] = [
   {
     id: 'grass-green',
-    label: '草坪绿',
-    description: '自然柔和，强调稳定与专注感。',
+    label: '初春绿',
+    description: '生机盎然的春芽绿，清新明快且富有活力。',
     palette: {
-      background: '#eef6ef',
-      foreground: '#1d291f',
-      card: '#f9fdf8',
-      primary: '#2f7d3f',
-      border: '#c7ddcb',
-      muted: '#e0ede2',
-      accent: '#d0e7d4',
-      sidebar: '#d7eadb',
+      background: '#eef9ec',
+      foreground: '#19301f',
+      card: '#f8fdf6',
+      primary: '#39a94c',
+      border: '#bfe0c3',
+      muted: '#dcf0de',
+      accent: '#cdeacb',
+      sidebar: '#d6efd4',
     },
   },
   {
     id: 'desert-yellow',
     label: '沙漠黄',
-    description: '暖色低刺激，适合夜间低压办公。',
+    description: '羊皮卷暖黄，柔和复古并带有书卷感。',
     palette: {
-      background: '#f9f4e9',
-      foreground: '#2f2619',
-      card: '#fffaf1',
-      primary: '#b27a2d',
-      border: '#e7d2ae',
-      muted: '#f3e7d2',
-      accent: '#ecd8b6',
-      sidebar: '#efddbf',
+      background: '#f6ecd8',
+      foreground: '#3c2d1d',
+      card: '#fdf5e7',
+      primary: '#b48547',
+      border: '#e1cca8',
+      muted: '#f0e0c3',
+      accent: '#e8d5b1',
+      sidebar: '#ecddc0',
+    },
+  },
+  {
+    id: 'college-blue',
+    label: '大学蓝',
+    description: '晴空亮蓝，清透明快且保持阅读舒适。',
+    palette: {
+      background: '#eaf5ff',
+      foreground: '#103356',
+      card: '#f6fbff',
+      primary: '#2a88e6',
+      border: '#bfdaf2',
+      muted: '#dbeeff',
+      accent: '#cde6fb',
+      sidebar: '#d4ebff',
+    },
+  },
+  {
+    id: 'deep-sea-blue',
+    label: '深海蓝',
+    description: '深海暗蓝，适合夜间沉浸与长时间专注。',
+    palette: {
+      background: '#0a1321',
+      foreground: '#e3edff',
+      card: '#111d2f',
+      primary: '#2f76c0',
+      border: '#24364d',
+      muted: '#16243a',
+      accent: '#1d304a',
+      sidebar: '#0d1b2d',
     },
   },
 ]
@@ -73,7 +103,12 @@ function getPresetPalette(presetId: ThemePresetId): CustomThemePalette {
 }
 
 function isThemePresetId(value: unknown): value is ThemePresetId {
-  return value === 'grass-green' || value === 'desert-yellow'
+  return (
+    value === 'grass-green' ||
+    value === 'desert-yellow' ||
+    value === 'college-blue' ||
+    value === 'deep-sea-blue'
+  )
 }
 
 function normalizePresetId(value: unknown): ThemePresetId {
@@ -103,20 +138,17 @@ interface PersistedSettingsThemeState {
 }
 
 interface SettingsStoreState extends PersistedSettingsThemeState {
-  settingsSection: SettingsSection
   selectedProviderId: SelectedProviderId
   setMode: (mode: ThemeMode) => void
   setPreset: (preset: ThemePresetId) => void
   setFontSize: (fontSize: ThemeFontSize) => void
   setUseSerif: (useSerif: boolean) => void
   resetCustomTheme: () => void
-  setSettingsSection: (section: SettingsSection) => void
   setSelectedProviderId: (providerId: SelectedProviderId) => void
   resetSettingsUiState: () => void
 }
 
 const defaultSettingsUiState = {
-  settingsSection: 'general' as SettingsSection,
   selectedProviderId: 'new' as SelectedProviderId,
 }
 
@@ -142,7 +174,6 @@ export const useSettingsStore = create<SettingsStoreState>()(
           preset: defaultThemePresetId,
           custom: getPresetPalette(defaultThemePresetId),
         }),
-      setSettingsSection: (settingsSection) => set({ settingsSection }),
       setSelectedProviderId: (selectedProviderId) => set({ selectedProviderId }),
       resetSettingsUiState: () => set(defaultSettingsUiState),
     }),

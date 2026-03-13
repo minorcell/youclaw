@@ -11,7 +11,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
@@ -22,7 +21,6 @@ import type {
   UsageLogsPayload,
   UsageModelStatsPayload,
   UsageProviderStatsPayload,
-  UsageSettingsPayload,
   UsageStatsRange,
   UsageSummaryPayload,
   UsageToolStatsPayload,
@@ -96,13 +94,13 @@ function statusLabel(status: string): string {
 
 function statusBadgeClass(status: string): string {
   if (status === 'completed') {
-    return 'bg-emerald-500/10 text-emerald-700'
+    return 'bg-primary/15 text-primary'
   }
   if (status === 'failed') {
     return 'bg-destructive/10 text-destructive'
   }
   if (status === 'cancelled') {
-    return 'bg-amber-500/10 text-amber-700'
+    return 'bg-muted text-muted-foreground'
   }
   return 'bg-background text-foreground'
 }
@@ -177,7 +175,7 @@ function PaginationBar({
 }
 
 export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionProps) {
-  const { error: toastError, success: toastSuccess } = useToastContext()
+  const { error: toastError } = useToastContext()
 
   const providers = useMemo(() => flattenProviderProfiles(providerAccounts), [providerAccounts])
 
@@ -186,9 +184,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
 
   const [summary, setSummary] = useState<UsageSummaryPayload | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
-
-  const [usageSettings, setUsageSettings] = useState<UsageSettingsPayload | null>(null)
-  const [settingsBusy, setSettingsBusy] = useState(false)
 
   const [logsPage, setLogsPage] = useState(1)
   const [logsLoading, setLogsLoading] = useState(false)
@@ -227,29 +222,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
       })),
     [providers],
   )
-
-  useEffect(() => {
-    let disposed = false
-
-    async function fetchUsageSettings() {
-      try {
-        const payload = await getAppClient().request<UsageSettingsPayload>('usage.settings.get', {})
-        if (!disposed) {
-          setUsageSettings(payload)
-        }
-      } catch (error) {
-        if (!disposed) {
-          toastError(errorMessageFromUnknown(error))
-        }
-      }
-    }
-
-    void fetchUsageSettings()
-
-    return () => {
-      disposed = true
-    }
-  }, [toastError])
 
   useEffect(() => {
     const requestId = ++summaryRequestIdRef.current
@@ -441,21 +413,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
     }
   }, [activeTab, range, toolsPage, toastError])
 
-  async function handleDetailLoggingChange(checked: boolean) {
-    setSettingsBusy(true)
-    try {
-      const payload = await getAppClient().request<UsageSettingsPayload>('usage.settings.update', {
-        detail_logging_enabled: checked,
-      })
-      setUsageSettings(payload)
-      toastSuccess(checked ? '已开启详情记录。' : '已关闭详情记录。')
-    } catch (error) {
-      toastError(errorMessageFromUnknown(error))
-    } finally {
-      setSettingsBusy(false)
-    }
-  }
-
   async function handleToggleTurnDetail(turnId: string) {
     if (expandedTurnId === turnId) {
       setExpandedTurnId(null)
@@ -564,7 +521,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
             </TabsList>
 
             <TabsContent className='pt-3' value='logs'>
-              <div className='mb-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]'>
+              <div className='mb-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]'>
                 <Select onValueChange={(value) => setLogModelId(value ?? 'all')} value={logModelId}>
                   <SelectTrigger className='w-full'>
                     <SelectValue placeholder='选择模型' />
@@ -613,15 +570,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     ))}
                   </SelectContent>
                 </Select>
-
-                <label className='flex items-center justify-end gap-2 rounded-xl bg-background/80 px-3 py-2 text-sm'>
-                  详情记录开关
-                  <Switch
-                    checked={usageSettings?.detail_logging_enabled ?? false}
-                    disabled={settingsBusy}
-                    onCheckedChange={handleDetailLoggingChange}
-                  />
-                </label>
               </div>
 
               <div className='space-y-2'>
@@ -634,7 +582,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                     const isExpanded = expandedTurnId === item.turn_id
                     const detailPayload = detailsByTurnId[item.turn_id]
                     return (
-                      <div className='rounded-xl bbg-background/75 p-3' key={item.turn_id}>
+                      <div className='rounded-xl bg-background/75 p-3' key={item.turn_id}>
                         <div className='flex flex-wrap items-center gap-2'>
                           <Badge className={cn('', statusBadgeClass(item.status))}>
                             {statusLabel(item.status)}
@@ -704,7 +652,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
                                         '',
                                         tool.is_error
                                           ? 'bg-destructive/10 text-destructive'
-                                          : 'bg-emerald-500/10 text-emerald-700',
+                                          : 'bg-primary/15 text-primary',
                                       )}
                                     >
                                       {tool.status}
