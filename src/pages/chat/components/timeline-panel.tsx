@@ -58,13 +58,13 @@ export function TimelinePanel({ turn, onResolveApproval }: TimelinePanelProps) {
                     {JSON.stringify(item.toolCall.args_json, null, 2)}
                   </pre>
                   {item.approval ? (
-                    <div className='rounded-3xl border border-amber-500/30 bg-amber-500/10 p-4'>
-                      <div className='flex items-center gap-2 text-amber-900'>
+                    <div className='rounded-3xl border border-border/70 bg-accent/35 p-4'>
+                      <div className='flex items-center gap-2 text-accent-foreground'>
                         <ShieldAlert className='h-4 w-4' />
                         <span className='text-sm font-medium'>Write approval required</span>
                       </div>
-                      <p className='mt-2 text-xs text-amber-900'>{item.approval.path}</p>
-                      <pre className='mt-3 max-h-48 overflow-auto rounded-2xl bg-white/70 p-3 text-[11px] leading-5 text-amber-950'>
+                      <p className='mt-2 text-xs text-accent-foreground/90'>{item.approval.path}</p>
+                      <pre className='mt-3 max-h-48 overflow-auto rounded-2xl bg-background/75 p-3 text-[11px] leading-5 text-foreground/85'>
                         {item.approval.preview_json.diff ?? 'No diff preview'}
                       </pre>
                       {item.approval.status === 'pending' ? (
@@ -80,7 +80,7 @@ export function TimelinePanel({ turn, onResolveApproval }: TimelinePanelProps) {
                           </Button>
                         </div>
                       ) : (
-                        <p className='mt-3 text-xs font-medium uppercase tracking-[0.18em] text-amber-900'>
+                        <p className='mt-3 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground'>
                           {item.approval.status}
                         </p>
                       )}

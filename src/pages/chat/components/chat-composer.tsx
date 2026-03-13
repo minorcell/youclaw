@@ -45,7 +45,7 @@ export function ChatComposer({
     : (selectedProviderId ?? '')
 
   return (
-    <Card className='rounded-2xl border border-border/70 bg-background/95 py-0 shadow-[0_12px_40px_-26px_rgba(0,0,0,0.35)] backdrop-blur'>
+    <Card className='rounded-2xl border border-border/70 bg-background/95 py-0 shadow-lg shadow-foreground/15 backdrop-blur'>
       <div className='px-3 pt-3'>
         <Textarea
           className='rounded-xs min-h-16 max-h-60 resize-none border-0 bg-transparent p-0 text-[16px] leading-[1.4] shadow-none focus-visible:ring-0 overflow-y-auto dark:bg-transparent'
@@ -86,7 +86,7 @@ export function ChatComposer({
             onValueChange={(value) => onBindProvider(value)}
             value={selectedProviderId ?? providers[0]?.id ?? ''}
           >
-            <SelectTrigger className='h-9 min-w-42.5 rounded-full border-border bg-muted/70 px-3 text-[13px]'>
+            <SelectTrigger className='h-8 min-w-42.5 rounded-full border-0 bg-muted/70 px-3 text-[13px] shadow-none focus-visible:border-transparent focus-visible:ring-0'>
               <SelectValue placeholder='选择模型'>{selectedModel}</SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -100,8 +100,8 @@ export function ChatComposer({
           <Button
             className={
               isTurnRunning
-                ? 'h-9 w-9 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                : 'h-9 w-9 rounded-full bg-primary text-primary-foreground hover:bg-primary/90'
+                ? 'rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                : 'rounded-full bg-primary text-primary-foreground hover:bg-primary/90'
             }
             onClick={isTurnRunning ? onCancelTurn : onSend}
             size='icon'
