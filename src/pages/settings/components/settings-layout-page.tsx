@@ -24,7 +24,11 @@ export function SettingsLayoutPage() {
   const location = useLocation()
 
   const section = useMemo(
-    () => normalizeSettingsSection(settingsSectionFromPath(location.pathname), DEFAULT_SETTINGS_SECTION),
+    () =>
+      normalizeSettingsSection(
+        settingsSectionFromPath(location.pathname),
+        DEFAULT_SETTINGS_SECTION,
+      ),
     [location.pathname],
   )
 

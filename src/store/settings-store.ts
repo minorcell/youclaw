@@ -2,11 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type ThemeMode = 'white' | 'black' | 'custom'
-export type ThemePresetId =
-  | 'grass-green'
-  | 'desert-yellow'
-  | 'college-blue'
-  | 'deep-sea-blue'
+export type ThemePresetId = 'grass-green' | 'desert-yellow' | 'college-blue' | 'deep-sea-blue'
 export type ThemeFontSize = 'small' | 'medium' | 'large'
 export type SettingsSection = 'general' | 'theme' | 'memory' | 'providers' | 'usage'
 export type SelectedProviderId = string | 'new'

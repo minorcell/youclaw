@@ -31,7 +31,8 @@ export function AppLayout() {
   const pendingSidebarWidthRef = useRef<number | null>(null)
 
   const sessionIdFromRoute = params.sessionId ?? null
-  const isSettingsPage = location.pathname === '/settings' || location.pathname.startsWith('/settings/')
+  const isSettingsPage =
+    location.pathname === '/settings' || location.pathname.startsWith('/settings/')
 
   const initialized = useAppStore((state) => state.initialized)
   const providerAccounts = useAppStore((state) => state.providerAccounts)

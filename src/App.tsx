@@ -8,10 +8,7 @@ import { setAppClient } from '@/lib/app-client'
 import { applyTheme } from '@/lib/theme'
 import { AppWsClient } from '@/lib/ws-client'
 import { ChatPage } from '@/pages/chat'
-import {
-  SettingsLayoutPage,
-  SettingsSectionPage,
-} from '@/pages/settings'
+import { SettingsLayoutPage, SettingsSectionPage } from '@/pages/settings'
 import { HomeRedirectPage, ProviderOnboardingPage } from '@/pages/welcome'
 import { useAppStore } from '@/store/app-store'
 import { useSettingsStore } from '@/store/settings-store'

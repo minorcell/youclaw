@@ -1,4 +1,11 @@
-import { Bot, ChartColumnIncreasing, Palette, Server, SlidersHorizontal, type LucideIcon } from 'lucide-react'
+import {
+  Bot,
+  ChartColumnIncreasing,
+  Palette,
+  Server,
+  SlidersHorizontal,
+  type LucideIcon,
+} from 'lucide-react'
 
 import type { SettingsSection } from '@/store/settings-store'
 

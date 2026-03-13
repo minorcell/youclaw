@@ -136,7 +136,9 @@ export function AgentMemoryFilesSection() {
     setReindexing(true)
     try {
       const payload = await getAppClient().request<MemoryReindexPayload>('agent.memory.reindex', {})
-      toastSuccess(`记忆索引已更新：${payload.files_indexed} 文件 / ${payload.indexed_chunks} 分片。`)
+      toastSuccess(
+        `记忆索引已更新：${payload.files_indexed} 文件 / ${payload.indexed_chunks} 分片。`,
+      )
     } catch (error) {
       toastError(errorText(error))
     } finally {
