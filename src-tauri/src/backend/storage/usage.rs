@@ -1,50 +1,10 @@
 use super::*;
 
 impl StorageService {
-    pub fn get_usage_detail_logging_enabled(&self) -> AppResult<bool> {
-        let conn = self.open_connection()?;
-        let value = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'usage_detail_logging_enabled'",
-                [],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()?
-            .flatten();
-        Ok(match value.as_deref() {
-            Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on") => true,
-            Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("off") => false,
-            Some(_) => DEFAULT_USAGE_DETAIL_LOGGING_ENABLED,
-            None => DEFAULT_USAGE_DETAIL_LOGGING_ENABLED,
-        })
-    }
-
-    pub fn set_usage_detail_logging_enabled(
-        &self,
-        detail_logging_enabled: bool,
-    ) -> AppResult<UsageSettingsPayload> {
-        let conn = self.open_connection()?;
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('usage_detail_logging_enabled', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [if detail_logging_enabled { "1" } else { "0" }],
-        )?;
-        Ok(UsageSettingsPayload {
-            detail_logging_enabled,
-        })
-    }
-
-    pub fn usage_settings_payload(&self) -> AppResult<UsageSettingsPayload> {
-        Ok(UsageSettingsPayload {
-            detail_logging_enabled: self.get_usage_detail_logging_enabled()?,
-        })
-    }
-
     pub fn insert_turn_usage_metric_start(
         &self,
         turn: &ChatTurn,
         provider: Option<&ProviderProfile>,
-        detail_logged: bool,
     ) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
@@ -77,7 +37,7 @@ impl StorageService {
                 turn.status.as_str(),
                 turn.user_message,
                 turn.created_at,
-                if detail_logged { 1i64 } else { 0i64 },
+                1i64,
             ],
         )?;
         Ok(())
@@ -155,7 +115,6 @@ impl StorageService {
         )?;
 
         if changed == 0 {
-            let detail_logged = self.get_usage_detail_logging_enabled()?;
             let usage_value = usage.cloned().unwrap_or_default();
             conn.execute(
                 "INSERT INTO turn_usage_metrics (
@@ -174,7 +133,7 @@ impl StorageService {
                     turn.finished_at,
                     duration_ms,
                     step_count.unwrap_or(0) as i64,
-                    if detail_logged { 1i64 } else { 0i64 },
+                    1i64,
                     usage_value.input_tokens as i64,
                     usage_value.input_no_cache_tokens as i64,
                     usage_value.input_cache_read_tokens as i64,
@@ -588,7 +547,7 @@ impl StorageService {
         if let Some(flag) = value {
             return Ok(flag != 0);
         }
-        self.get_usage_detail_logging_enabled()
+        Ok(true)
     }
 }
 

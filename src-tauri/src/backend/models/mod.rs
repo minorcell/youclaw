@@ -37,8 +37,8 @@ pub use session::{
 pub use usage::{
     UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,
     UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
-    UsageProviderStatsItem, UsageProviderStatsPayload, UsageSettingsPayload,
-    UsageSettingsUpdateRequest, UsageStatsListRequest, UsageSummaryPayload, UsageSummaryRequest,
+    UsageProviderStatsItem, UsageProviderStatsPayload, UsageStatsListRequest,
+    UsageSummaryPayload, UsageSummaryRequest,
     UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D,
     USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };

@@ -998,10 +998,9 @@ pub fn start_turn(state: BackendState, session_id: String, text: String) -> AppR
     } else {
         None
     };
-    let detail_logged = state.storage.get_usage_detail_logging_enabled()?;
     state
         .storage
-        .insert_turn_usage_metric_start(&turn, provider.as_ref(), detail_logged)?;
+        .insert_turn_usage_metric_start(&turn, provider.as_ref())?;
     state.storage.insert_message(&user_message)?;
     state.publish_sessions_changed()?;
     state.ws_hub.emit_turn_event(

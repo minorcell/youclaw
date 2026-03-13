@@ -22,7 +22,7 @@ use crate::backend::models::{
     ProviderProfile, TurnStatus, SessionsChangedPayload, StoredProviders, ToolApproval,
     UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,
     UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
-    UsageProviderStatsItem, UsageProviderStatsPayload, UsageSettingsPayload, UsageStatsListRequest,
+    UsageProviderStatsItem, UsageProviderStatsPayload, UsageStatsListRequest,
     UsageSummaryPayload, UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem,
     UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };
@@ -41,7 +41,6 @@ struct StorageInner {
 
 const DEFAULT_USAGE_PAGE_SIZE: u32 = 20;
 const MAX_USAGE_PAGE_SIZE: u32 = 100;
-const DEFAULT_USAGE_DETAIL_LOGGING_ENABLED: bool = true;
 
 #[derive(Debug, Clone)]
 pub struct MemoryChunkInput {

@@ -179,29 +179,6 @@ impl StorageService {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn list_messages_for_session(&self, session_id: &str) -> AppResult<Vec<ChatMessage>> {
-        let conn = self.open_connection()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, parts_json, turn_id, created_at
-             FROM chat_messages
-             WHERE session_id = ?1
-             ORDER BY created_at ASC, rowid ASC",
-        )?;
-        let rows = stmt.query_map([session_id], |row| {
-            let parts_json = row.get::<_, String>(3)?;
-            let role_raw = row.get::<_, String>(2)?;
-            Ok(ChatMessage {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                role: parse_message_role_column(&role_raw, 2)?,
-                parts_json: serde_json::from_str(&parts_json).unwrap_or(Value::Null),
-                turn_id: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-    }
-
     pub fn list_active_messages_for_session(
         &self,
         session_id: &str,
@@ -231,24 +208,6 @@ impl StorageService {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn clear_session_messages(&self, session_id: &str) -> AppResult<()> {
-        let conn = self.open_connection()?;
-        conn.execute(
-            "DELETE FROM message_marks
-             WHERE message_id IN (SELECT id FROM chat_messages WHERE session_id = ?1)",
-            [session_id],
-        )?;
-        conn.execute(
-            "DELETE FROM chat_messages WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute(
-            "DELETE FROM session_memory_state WHERE session_id = ?1",
-            [session_id],
-        )?;
-        Ok(())
-    }
-
     pub fn mark_messages(&self, message_ids: &[String], mark: &str) -> AppResult<u32> {
         if message_ids.is_empty() {
             return Ok(0);
@@ -265,19 +224,6 @@ impl StorageService {
         }
         tx.commit()?;
         Ok(changed)
-    }
-
-    pub fn count_marked_messages(&self, session_id: &str, mark: &str) -> AppResult<u32> {
-        let conn = self.open_connection()?;
-        let count = conn.query_row(
-            "SELECT COUNT(*)
-             FROM message_marks mm
-             JOIN chat_messages m ON m.id = mm.message_id
-             WHERE m.session_id = ?1 AND mm.mark = ?2",
-            params![session_id, mark],
-            |row| row.get::<_, i64>(0),
-        )?;
-        Ok(count.max(0) as u32)
     }
 
     pub fn get_session_compressed_summary(&self, session_id: &str) -> AppResult<String> {
@@ -445,16 +391,6 @@ impl StorageService {
 
     pub fn insert_message(&self, message: &ChatMessage) -> AppResult<()> {
         self.insert_messages(std::slice::from_ref(message))
-    }
-
-    pub fn list_message_objects_for_session(
-        &self,
-        session_id: &str,
-    ) -> AppResult<Vec<aquaregia::Message>> {
-        self.list_messages_for_session(session_id)?
-            .iter()
-            .map(message_from_record)
-            .collect()
     }
 
     pub fn list_active_message_objects_for_session(

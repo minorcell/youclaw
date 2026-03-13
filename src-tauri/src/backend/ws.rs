@@ -20,7 +20,7 @@ use crate::backend::models::{
     MemorySearchRequest, RenameSessionRequest, TestProviderModelRequest,
     ToolApprovalResolveRequest, TurnStepsListPayload, TurnStepsListRequest,
     UpdateProviderModelRequest, UpdateProviderRequest, UsageLogDetailRequest,
-    UsageLogsListRequest, UsageSettingsUpdateRequest, UsageStatsListRequest, UsageSummaryRequest,
+    UsageLogsListRequest, UsageStatsListRequest, UsageSummaryRequest,
     WorkspaceFileReadRequest, WorkspaceFileWriteRequest, WsEnvelope, WsKind,
 };
 use crate::backend::BackendState;
@@ -306,17 +306,6 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
         "usage.stats.tools.list" => {
             let req = serde_json::from_value::<UsageStatsListRequest>(envelope.payload)?;
             let payload = state.storage.list_usage_tool_stats(req)?;
-            WsEnvelope::response_ok(envelope.id, envelope.name, payload)?
-        }
-        "usage.settings.get" => {
-            let payload = state.storage.usage_settings_payload()?;
-            WsEnvelope::response_ok(envelope.id, envelope.name, payload)?
-        }
-        "usage.settings.update" => {
-            let req = serde_json::from_value::<UsageSettingsUpdateRequest>(envelope.payload)?;
-            let payload = state
-                .storage
-                .set_usage_detail_logging_enabled(req.detail_logging_enabled)?;
             WsEnvelope::response_ok(envelope.id, envelope.name, payload)?
         }
         other => return Err(AppError::NotFound(format!("unknown request `{other}`"))),
