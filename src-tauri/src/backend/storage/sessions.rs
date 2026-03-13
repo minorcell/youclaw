@@ -641,11 +641,11 @@ fn parse_turn_status_column(value: &str, column: usize) -> rusqlite::Result<Turn
     value.parse::<TurnStatus>().map_err(|_| {
         rusqlite::Error::FromSqlConversionFailure(
             column,
-                rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("invalid turn status `{value}`"),
-                )),
-            )
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid turn status `{value}`"),
+            )),
+        )
     })
 }

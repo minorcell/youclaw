@@ -12,16 +12,14 @@ use tokio::sync::mpsc;
 use crate::backend::agent;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
-    now_timestamp, AgentConfigUpdateRequest,
-    BindSessionProviderRequest,
-    ChatTurnCancelRequest, ChatTurnStartRequest, ConnectionReadyPayload,
-    CreateProviderModelRequest, CreateProviderRequest, CreateSessionRequest,
-    DeleteProviderModelRequest, DeleteSessionRequest, MemoryGetRequest,
-    MemorySearchRequest, RenameSessionRequest, TestProviderModelRequest,
+    now_timestamp, AgentConfigUpdateRequest, BindSessionProviderRequest, ChatTurnCancelRequest,
+    ChatTurnStartRequest, ConnectionReadyPayload, CreateProviderModelRequest,
+    CreateProviderRequest, CreateSessionRequest, DeleteProviderModelRequest, DeleteSessionRequest,
+    MemoryGetRequest, MemorySearchRequest, RenameSessionRequest, TestProviderModelRequest,
     ToolApprovalResolveRequest, TurnStepsListPayload, TurnStepsListRequest,
-    UpdateProviderModelRequest, UpdateProviderRequest, UsageLogDetailRequest,
-    UsageLogsListRequest, UsageStatsListRequest, UsageSummaryRequest,
-    WorkspaceFileReadRequest, WorkspaceFileWriteRequest, WsEnvelope, WsKind,
+    UpdateProviderModelRequest, UpdateProviderRequest, UsageLogDetailRequest, UsageLogsListRequest,
+    UsageStatsListRequest, UsageSummaryRequest, WorkspaceFileReadRequest,
+    WorkspaceFileWriteRequest, WsEnvelope, WsKind,
 };
 use crate::backend::BackendState;
 
@@ -123,9 +121,7 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
     }
 
     let response = match envelope.name.as_str() {
-        "bootstrap.get" => {
-            WsEnvelope::response_ok(envelope.id, envelope.name, state.bootstrap()?)?
-        }
+        "bootstrap.get" => WsEnvelope::response_ok(envelope.id, envelope.name, state.bootstrap()?)?,
         "providers.list" => {
             let payload = state.list_provider_snapshot()?;
             WsEnvelope::response_ok(envelope.id, envelope.name, payload)?

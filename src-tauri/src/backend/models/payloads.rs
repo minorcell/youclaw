@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    AgentConfigPayload, ChatMessage, ChatTurn, ChatSession, ProviderAccount, ProviderProfile,
+    AgentConfigPayload, ChatMessage, ChatSession, ChatTurn, ProviderAccount, ProviderProfile,
     ToolApproval,
 };
 
