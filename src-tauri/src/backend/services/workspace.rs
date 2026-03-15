@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::backend::memory_manager::is_memory_related_workspace_path;
 
 impl BackendState {
     pub fn list_workspace_files(&self) -> AppResult<WorkspaceFilesPayload> {
@@ -23,16 +24,13 @@ impl BackendState {
     ) -> AppResult<WorkspaceFileWritePayload> {
         self.workspace
             .write_workspace_file(&req.path, &req.content)?;
-        if is_memory_related_path(&req.path) {
-            let _ = self.reindex_memory();
+        if is_memory_related_workspace_path(&req.path) {
+            let changed = vec![req.path.clone()];
+            let _ = self.sync_memory_paths(&changed);
         }
         Ok(WorkspaceFileWritePayload {
             path: req.path,
             written: true,
         })
     }
-}
-
-fn is_memory_related_path(path: &str) -> bool {
-    path == "MEMORY.md" || path == "PROFILE.md" || path.starts_with("memory/")
 }

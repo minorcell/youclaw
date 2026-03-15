@@ -142,7 +142,17 @@ impl StorageService {
                 line_end INTEGER NOT NULL,
                 heading TEXT,
                 content TEXT NOT NULL,
+                file_hash TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'memory',
                 updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS memory_source_files (
+                path TEXT PRIMARY KEY,
+                file_hash TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mtime_ms INTEGER NOT NULL,
+                indexed_at TEXT NOT NULL,
+                source TEXT NOT NULL
             );
             CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts USING fts5(
                 id UNINDEXED,
@@ -166,8 +176,11 @@ impl StorageService {
             ON message_marks (mark, message_id);
             CREATE INDEX IF NOT EXISTS idx_memory_chunks_path
             ON memory_chunks (path);
+            CREATE INDEX IF NOT EXISTS idx_memory_source_files_source
+            ON memory_source_files (source);
             ",
         )?;
+        ensure_memory_schema_fields(&conn)?;
         conn.execute(
             "INSERT OR IGNORE INTO agent_settings (
                 id, max_steps, max_input_tokens, compact_ratio, keep_recent,
@@ -183,4 +196,41 @@ impl StorageService {
         conn.busy_timeout(Duration::from_secs(3))?;
         Ok(conn)
     }
+}
+
+fn ensure_memory_schema_fields(conn: &Connection) -> AppResult<()> {
+    ensure_table_column(
+        conn,
+        "memory_chunks",
+        "file_hash",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_table_column(
+        conn,
+        "memory_chunks",
+        "source",
+        "TEXT NOT NULL DEFAULT 'memory'",
+    )?;
+    Ok(())
+}
+
+fn ensure_table_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> AppResult<()> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name = row.get::<_, String>(1)?;
+        if name == column {
+            return Ok(());
+        }
+    }
+
+    let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+    conn.execute(&sql, [])?;
+    Ok(())
 }

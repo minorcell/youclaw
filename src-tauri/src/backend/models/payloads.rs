@@ -60,49 +60,71 @@ pub struct WorkspaceFilesPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySearchRequest {
     pub query: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "maxResults",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_results: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "minScore", skip_serializing_if = "Option::is_none")]
     pub min_score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySearchHit {
     pub path: String,
-    pub line_start: u32,
-    pub line_end: u32,
+    #[serde(rename = "startLine")]
+    pub start_line: u32,
+    #[serde(rename = "endLine")]
+    pub end_line: u32,
     pub snippet: String,
     pub score: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemorySearchPayload {
-    pub query: String,
-    pub hits: Vec<MemorySearchHit>,
+    pub results: Vec<MemorySearchHit>,
+    pub provider: String,
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryGetRequest {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<u32>,
+    pub from: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
+    pub lines: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryGetPayload {
     pub path: String,
-    pub line_start: u32,
-    pub line_end: u32,
-    pub total_lines: u32,
-    pub content: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryReindexPayload {
-    pub indexed_chunks: u32,
-    pub files_indexed: u32,
+    pub scanned: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub chunks_indexed: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

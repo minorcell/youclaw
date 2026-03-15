@@ -15,8 +15,8 @@ use tiktoken_rs::{get_bpe_from_model, CoreBPE};
 use crate::backend::agents::tools::{
     build_filesystem_list_dir_tool, build_filesystem_read_file_tool,
     build_filesystem_write_file_tool, build_memory_get_tool, build_memory_search_tool,
-    build_memory_write_tool, FilesystemToolContext, FILESYSTEM_LIST_DIR_TOOL_NAME,
-    FILESYSTEM_READ_FILE_TOOL_NAME, FILESYSTEM_WRITE_FILE_TOOL_NAME,
+    FilesystemToolContext, FILESYSTEM_LIST_DIR_TOOL_NAME, FILESYSTEM_READ_FILE_TOOL_NAME,
+    FILESYSTEM_WRITE_FILE_TOOL_NAME,
 };
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
@@ -138,14 +138,12 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
     let filesystem_write_file_tool = build_filesystem_write_file_tool(filesystem_context.clone());
     let memory_search_tool = build_memory_search_tool(state.clone());
     let memory_get_tool = build_memory_get_tool(state.clone());
-    let memory_write_tool = build_memory_write_tool(state.clone());
     let tools = vec![
         filesystem_list_dir_tool,
         filesystem_read_file_tool,
         filesystem_write_file_tool,
         memory_search_tool,
         memory_get_tool,
-        memory_write_tool,
     ];
     let tool_map = tools
         .iter()
@@ -505,35 +503,6 @@ async fn handle_tool_calls(
             Some(duration_ms),
             tool_result.is_error,
         );
-
-        if tool_call.tool_name == "memory_write" {
-            let status = if tool_result.is_error { "error" } else { "ok" };
-            let path = tool_result
-                .output_json
-                .get("path")
-                .and_then(|value| value.as_str())
-                .or_else(|| {
-                    tool_call
-                        .args_json
-                        .get("path")
-                        .and_then(|value| value.as_str())
-                })
-                .unwrap_or("memory/unknown.md");
-            let bytes_written = tool_result
-                .output_json
-                .get("bytes_written")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize);
-            let _ = state.storage.record_file_operation(
-                &turn.session_id,
-                &turn.id,
-                Some(&tool_call.call_id),
-                "memory_write",
-                path,
-                status,
-                bytes_written,
-            );
-        }
 
         state.ws_hub.emit_turn_event(
             &turn.id,

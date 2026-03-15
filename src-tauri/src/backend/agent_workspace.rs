@@ -6,26 +6,39 @@ use chrono::{SecondsFormat, Utc};
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::WorkspaceFileInfo;
 
-const FILE_ORDER: [(&str, bool); 4] = [
-    ("AGENTS.md", true),
-    ("SOUL.md", true),
-    ("PROFILE.md", false),
-    ("MEMORY.md", false),
-];
-
-const TOP_LEVEL_TEMPLATE_FILES: [&str; 5] = [
+const BOOTSTRAP_CONTEXT_FILES: [&str; 7] = [
     "AGENTS.md",
     "SOUL.md",
-    "PROFILE.md",
+    "TOOLS.md",
+    "IDENTITY.md",
+    "USER.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+];
+
+const TOP_LEVEL_TEMPLATE_FILES: [&str; 8] = [
+    "AGENTS.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "IDENTITY.md",
+    "USER.md",
+    "HEARTBEAT.md",
     "MEMORY.md",
     "BOOTSTRAP.md",
 ];
+
+const REQUIRED_CONTEXT_FILES: [&str; 2] = ["AGENTS.md", "SOUL.md"];
+const BOOTSTRAP_PER_FILE_MAX_CHARS: usize = 20_000;
+const BOOTSTRAP_TOTAL_MAX_CHARS: usize = 150_000;
 
 const BOOTSTRAP_COMPLETED_FILE: &str = ".bootstrap_completed";
 
 const ZH_AGENTS_TEMPLATE: &str = include_str!("prompts/templates/AGENTS.md");
 const ZH_SOUL_TEMPLATE: &str = include_str!("prompts/templates/SOUL.md");
-const ZH_PROFILE_TEMPLATE: &str = include_str!("prompts/templates/PROFILE.md");
+const ZH_TOOLS_TEMPLATE: &str = include_str!("prompts/templates/TOOLS.md");
+const ZH_IDENTITY_TEMPLATE: &str = include_str!("prompts/templates/IDENTITY.md");
+const ZH_USER_TEMPLATE: &str = include_str!("prompts/templates/USER.md");
+const ZH_HEARTBEAT_TEMPLATE: &str = include_str!("prompts/templates/HEARTBEAT.md");
 const ZH_MEMORY_TEMPLATE: &str = include_str!("prompts/templates/MEMORY.md");
 const ZH_BOOTSTRAP_TEMPLATE: &str = include_str!("prompts/templates/BOOTSTRAP.md");
 
@@ -122,82 +135,91 @@ impl AgentWorkspace {
         Ok(path)
     }
 
-    pub fn read_memory_file(&self, relative_path: &str) -> AppResult<String> {
-        let path = self.resolve_memory_file(relative_path)?;
-        fs::read_to_string(path).map_err(Into::into)
-    }
-
-    pub fn write_memory_file(
-        &self,
-        relative_path: &str,
-        content: &str,
-        append: bool,
-    ) -> AppResult<PathBuf> {
-        let path = self.resolve_memory_file(relative_path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        if append {
-            let mut new_content = String::new();
-            if path.exists() {
-                new_content.push_str(&fs::read_to_string(&path)?);
-                if !new_content.ends_with('\n') {
-                    new_content.push('\n');
-                }
-            }
-            new_content.push_str(content);
-            fs::write(&path, new_content)?;
-        } else {
-            fs::write(&path, content)?;
-        }
-
-        Ok(path)
-    }
-
     pub fn build_system_prompt(&self) -> AppResult<String> {
         self.ensure_layout()?;
-        let mut parts = Vec::<String>::new();
-
-        for (name, required) in FILE_ORDER {
-            let path = self.root.join(name);
+        for required in REQUIRED_CONTEXT_FILES {
+            let path = self.root.join(required);
             if !path.exists() {
-                if required {
-                    return Err(AppError::Validation(format!(
-                        "required prompt file `{name}` is missing"
-                    )));
-                }
-                continue;
+                return Err(AppError::Validation(format!(
+                    "required prompt file `{required}` is missing"
+                )));
             }
+        }
 
+        let mut prompt = vec![
+            "You are a personal assistant running inside YouClaw.".to_string(),
+            "".to_string(),
+            "## Memory Recall".to_string(),
+            "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines.".to_string(),
+            "If memory_search returns unavailable/disabled, explicitly tell the user memory retrieval is unavailable.".to_string(),
+            "".to_string(),
+            "## Workspace".to_string(),
+            format!("Your working directory is: {}", self.root.to_string_lossy()),
+            "memory/*.md daily files are not auto injected; read them on demand via memory_search/memory_get.".to_string(),
+            "".to_string(),
+            "## Project Context".to_string(),
+        ];
+
+        let mut remaining_budget = BOOTSTRAP_TOTAL_MAX_CHARS;
+        let mut truncated_files = Vec::new();
+        for path in self.collect_bootstrap_prompt_files() {
+            if remaining_budget == 0 {
+                break;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
             let content = fs::read_to_string(&path).map_err(|err| {
-                AppError::Io(format!(
-                    "failed to read required prompt file `{name}`: {err}"
-                ))
+                AppError::Io(format!("failed to read prompt file `{name}`: {err}"))
             })?;
             let normalized = strip_frontmatter(content.trim());
             if normalized.is_empty() {
-                if required {
-                    return Err(AppError::Validation(format!(
-                        "required prompt file `{name}` is empty"
-                    )));
-                }
                 continue;
             }
-            parts.push(format!("# {name}\n\n{normalized}"));
+
+            let (per_file_trimmed, per_file_truncated) =
+                truncate_with_marker(&normalized, BOOTSTRAP_PER_FILE_MAX_CHARS);
+            let (final_content, total_truncated) =
+                truncate_with_marker(&per_file_trimmed, remaining_budget);
+            if final_content.trim().is_empty() {
+                continue;
+            }
+            remaining_budget = remaining_budget.saturating_sub(final_content.chars().count());
+            if per_file_truncated || total_truncated {
+                truncated_files.push(name.to_string());
+            }
+            prompt.push(format!("# {name}\n\n{final_content}"));
+            prompt.push(String::new());
         }
 
-        if parts.is_empty() {
-            Err(AppError::Validation(
-                "no prompt sections available to build system prompt".to_string(),
-            ))
-        } else {
-            Ok(parts.join("\n\n"))
+        if !truncated_files.is_empty() {
+            prompt.push(format!(
+                "Warning: bootstrap context truncated for: {}",
+                truncated_files.join(", ")
+            ));
         }
+
+        Ok(prompt.join("\n"))
     }
 
     pub fn build_bootstrap_guidance(&self, _language: &str) -> String {
         "# 引导模式已激活\n\n请先读取工作区中的 BOOTSTRAP.md 并按其执行。若用户明确要求跳过引导，再直接回答原问题。".to_string()
+    }
+
+    fn collect_bootstrap_prompt_files(&self) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        for name in BOOTSTRAP_CONTEXT_FILES {
+            let path = self.root.join(name);
+            if path.is_file() {
+                files.push(path);
+            }
+        }
+
+        let memory = self.root.join("MEMORY.md");
+        if memory.is_file() {
+            files.push(memory);
+        }
+        files
     }
 
     pub fn should_bootstrap(&self) -> bool {
@@ -208,33 +230,6 @@ impl AgentWorkspace {
     pub fn mark_bootstrap_completed(&self) -> AppResult<()> {
         fs::write(self.root.join(BOOTSTRAP_COMPLETED_FILE), b"ok")?;
         Ok(())
-    }
-
-    pub fn collect_memory_source_files(&self) -> AppResult<Vec<PathBuf>> {
-        self.ensure_layout()?;
-
-        let mut files = Vec::new();
-        for top in ["MEMORY.md", "PROFILE.md"] {
-            let path = self.root.join(top);
-            if path.is_file() {
-                files.push(path);
-            }
-        }
-
-        let memory_dir = self.memory_dir();
-        if memory_dir.is_dir() {
-            let mut entries = fs::read_dir(memory_dir)?
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("md")
-                })
-                .collect::<Vec<_>>();
-            entries.sort();
-            files.extend(entries);
-        }
-
-        Ok(files)
     }
 
     pub fn relative_path(&self, path: &Path) -> AppResult<String> {
@@ -278,26 +273,16 @@ impl AgentWorkspace {
 
         Ok(self.root.join(rel))
     }
-
-    pub fn resolve_memory_file(&self, relative_path: &str) -> AppResult<PathBuf> {
-        self.ensure_layout()?;
-        let rel = normalize_rel_path(relative_path)?;
-
-        if !is_allowed_memory_path(&rel) {
-            return Err(AppError::Validation(
-                "memory path is not allowed".to_string(),
-            ));
-        }
-
-        Ok(self.root.join(rel))
-    }
 }
 
-fn templates_for_language() -> [(&'static str, &'static str); 5] {
+fn templates_for_language() -> [(&'static str, &'static str); 8] {
     [
         ("AGENTS.md", ZH_AGENTS_TEMPLATE),
         ("SOUL.md", ZH_SOUL_TEMPLATE),
-        ("PROFILE.md", ZH_PROFILE_TEMPLATE),
+        ("TOOLS.md", ZH_TOOLS_TEMPLATE),
+        ("IDENTITY.md", ZH_IDENTITY_TEMPLATE),
+        ("USER.md", ZH_USER_TEMPLATE),
+        ("HEARTBEAT.md", ZH_HEARTBEAT_TEMPLATE),
         ("MEMORY.md", ZH_MEMORY_TEMPLATE),
         ("BOOTSTRAP.md", ZH_BOOTSTRAP_TEMPLATE),
     ]
@@ -318,6 +303,21 @@ fn strip_frontmatter(content: &str) -> String {
     } else {
         content.trim().to_string()
     }
+}
+
+fn truncate_with_marker(content: &str, max_chars: usize) -> (String, bool) {
+    if content.chars().count() <= max_chars {
+        return (content.to_string(), false);
+    }
+    const MARKER: &str = "\n...[truncated]";
+    let marker_chars = MARKER.chars().count();
+    if max_chars <= marker_chars {
+        return (MARKER.chars().take(max_chars).collect::<String>(), true);
+    }
+    let content_budget = max_chars - marker_chars;
+    let mut trimmed = content.chars().take(content_budget).collect::<String>();
+    trimmed.push_str(MARKER);
+    (trimmed, true)
 }
 
 fn normalize_rel_path(relative_path: &str) -> AppResult<PathBuf> {
@@ -373,26 +373,6 @@ fn is_allowed_workspace_path(path: &Path) -> bool {
     }
 }
 
-fn is_allowed_memory_path(path: &Path) -> bool {
-    let components = path
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().to_string()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return false;
-    }
-
-    match components.as_slice() {
-        [top] => top == "MEMORY.md" || top == "PROFILE.md",
-        [dir, _file] if dir == "memory" => true,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -406,13 +386,16 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let workspace = AgentWorkspace::new(dir.path());
         let copied = workspace.install_templates("en", true).expect("install");
-        assert_eq!(copied.len(), 5);
+        assert_eq!(copied.len(), 8);
 
         let root = workspace.root().to_path_buf();
         for name in [
             "AGENTS.md",
             "SOUL.md",
-            "PROFILE.md",
+            "TOOLS.md",
+            "IDENTITY.md",
+            "USER.md",
+            "HEARTBEAT.md",
             "MEMORY.md",
             "BOOTSTRAP.md",
         ] {
@@ -428,8 +411,8 @@ mod tests {
         let workspace = AgentWorkspace::new(dir.path());
         workspace.ensure_layout().expect("layout");
         workspace
-            .write_workspace_file("PROFILE.md", "only profile")
-            .expect("write profile");
+            .write_workspace_file("USER.md", "only user")
+            .expect("write user");
 
         assert!(workspace.build_system_prompt().is_err());
     }
@@ -446,17 +429,67 @@ mod tests {
             .write_workspace_file("SOUL.md", "---\nname: b\n---\nB")
             .expect("write soul");
         workspace
-            .write_workspace_file("PROFILE.md", "C")
-            .expect("write profile");
+            .write_workspace_file("TOOLS.md", "C")
+            .expect("write tools");
+        workspace
+            .write_workspace_file("USER.md", "D")
+            .expect("write user");
+        workspace
+            .write_workspace_file("MEMORY.md", "E")
+            .expect("write memory");
 
         let prompt = workspace.build_system_prompt().expect("prompt");
         let agents_index = prompt.find("# AGENTS.md").expect("agents section");
         let soul_index = prompt.find("# SOUL.md").expect("soul section");
-        let profile_index = prompt.find("# PROFILE.md").expect("profile section");
-        assert!(agents_index < soul_index && soul_index < profile_index);
+        let tools_index = prompt.find("# TOOLS.md").expect("tools section");
+        assert!(agents_index < soul_index && soul_index < tools_index);
         assert!(!prompt.contains("name: a"));
         assert!(prompt.contains("\n\nA"));
         assert!(prompt.contains("\n\nB"));
         assert!(prompt.contains("\n\nC"));
+        assert!(prompt.contains("\n\nD"));
+        assert!(prompt.contains("\n\nE"));
+    }
+
+    #[test]
+    fn system_prompt_does_not_auto_inject_daily_memory_files() {
+        let dir = tempdir().expect("tempdir");
+        let workspace = AgentWorkspace::new(dir.path());
+        workspace.ensure_layout().expect("layout");
+        workspace
+            .write_workspace_file("AGENTS.md", "A")
+            .expect("write agents");
+        workspace
+            .write_workspace_file("SOUL.md", "B")
+            .expect("write soul");
+        workspace
+            .write_workspace_file("MEMORY.md", "C")
+            .expect("write memory");
+        workspace
+            .write_workspace_file("memory/2026-03-15.md", "DAILY_CONTENT_MARKER")
+            .expect("write daily");
+
+        let prompt = workspace.build_system_prompt().expect("prompt");
+        assert!(!prompt.contains("DAILY_CONTENT_MARKER"));
+        assert!(prompt.contains("# MEMORY.md"));
+    }
+
+    #[test]
+    fn system_prompt_truncates_large_bootstrap_files() {
+        let dir = tempdir().expect("tempdir");
+        let workspace = AgentWorkspace::new(dir.path());
+        workspace.ensure_layout().expect("layout");
+        workspace
+            .write_workspace_file("AGENTS.md", "A")
+            .expect("write agents");
+        workspace
+            .write_workspace_file("SOUL.md", "B")
+            .expect("write soul");
+        workspace
+            .write_workspace_file("TOOLS.md", &"x".repeat(30_000))
+            .expect("write tools");
+
+        let prompt = workspace.build_system_prompt().expect("prompt");
+        assert!(prompt.contains("...[truncated]"));
     }
 }

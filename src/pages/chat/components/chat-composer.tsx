@@ -45,7 +45,7 @@ export function ChatComposer({
     : (selectedProviderId ?? '')
 
   return (
-    <Card className='rounded-2xl border border-border/70 bg-background/95 py-0 shadow-lg shadow-foreground/15 backdrop-blur'>
+    <Card className='rounded-2xl border border-border/70 bg-background/95 py-0 shadow-lg backdrop-blur'>
       <div className='px-3 pt-3'>
         <Textarea
           className='rounded-xs min-h-16 max-h-60 resize-none border-0 bg-transparent p-0 text-[16px] leading-[1.4] shadow-none focus-visible:ring-0 overflow-y-auto dark:bg-transparent'

@@ -18,13 +18,12 @@ use crate::backend::models::{
     flatten_provider_profiles, message_from_record, migrate_provider_accounts_from_legacy,
     normalize_provider_accounts, now_timestamp, AgentConfigPayload, AgentConfigUpdateRequest,
     BootstrapPayload, ChatMessage, ChatSession, ChatTurn, MemoryReindexPayload, MemorySearchHit,
-    MemorySearchPayload, MessageRole, ProviderAccount, ProviderProfile, SessionsChangedPayload,
-    StoredProviders, ToolApproval, TurnStatus, UsageLogDetailPayload, UsageLogDetailRequest,
-    UsageLogItem, UsageLogsListRequest, UsageLogsPayload, UsageModelStatsItem,
-    UsageModelStatsPayload, UsagePage, UsageProviderStatsItem, UsageProviderStatsPayload,
-    UsageStatsListRequest, UsageSummaryPayload, UsageSummaryRequest, UsageToolLogItem,
-    UsageToolStatsItem, UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D,
-    USAGE_RANGE_ALL,
+    MessageRole, ProviderAccount, ProviderProfile, SessionsChangedPayload, StoredProviders,
+    ToolApproval, TurnStatus, UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem,
+    UsageLogsListRequest, UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
+    UsageProviderStatsItem, UsageProviderStatsPayload, UsageStatsListRequest, UsageSummaryPayload,
+    UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload,
+    USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };
 
 #[derive(Clone)]
@@ -50,6 +49,27 @@ pub struct MemoryChunkInput {
     pub line_end: u32,
     pub heading: Option<String>,
     pub content: String,
+    pub file_hash: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemorySourceFileInput {
+    pub path: String,
+    pub file_hash: String,
+    pub file_size: u64,
+    pub mtime_ms: i64,
+    pub indexed_at: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemorySourceFileRecord {
+    pub path: String,
+    pub file_hash: String,
+    pub file_size: u64,
+    pub mtime_ms: i64,
+    pub source: String,
 }
 
 impl StorageService {
@@ -238,7 +258,11 @@ mod tests {
         assert!(build_fts_query("   ").is_err());
         assert_eq!(
             build_fts_query("memory project").expect("query"),
-            "\"memory\" AND \"project\""
+            "\"memory\" OR \"project\""
+        );
+        assert_eq!(
+            build_fts_query("学习 习惯 总结").expect("query"),
+            "\"学习\" OR \"习惯\" OR \"总结\""
         );
     }
 }

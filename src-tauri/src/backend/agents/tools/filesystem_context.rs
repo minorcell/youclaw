@@ -20,6 +20,9 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::errors::{AppError, AppResult};
+use crate::backend::memory_manager::{
+    resolve_relative_memory_path_from_absolute, BuiltinFtsMemoryManager, MemorySearchManager,
+};
 use crate::backend::models::{new_tool_approval, ToolRequestedPayload};
 use crate::backend::{ApprovalService, StorageService, WsHub};
 
@@ -152,6 +155,36 @@ impl FilesystemToolContext {
     ) -> AppResult<Value> {
         let resolved = resolve_path(input_path, &self.workspace_root)?;
         let tool_call = self.claim_tool_call(tool_name, "write_file", input_path);
+        let memory_rel =
+            resolve_relative_memory_path_from_absolute(&resolved, &self.workspace_root);
+
+        if let Some(rel) = memory_rel {
+            if let Some(parent) = resolved.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&resolved, content.as_bytes())?;
+            self.storage.record_file_operation(
+                &self.session_id,
+                &self.turn_id,
+                Some(&tool_call.call_id),
+                "write_file",
+                &resolved.to_string_lossy(),
+                "ok",
+                Some(content.len()),
+            )?;
+            let manager =
+                BuiltinFtsMemoryManager::new(self.storage.clone(), self.workspace_root.clone());
+            let changed_paths = vec![rel.clone()];
+            let sync = manager.sync(false, Some(&changed_paths))?;
+            return Ok(json!({
+                "action": "write_file",
+                "path": resolved.to_string_lossy(),
+                "bytes_written": content.len(),
+                "approval_bypassed": true,
+                "memory_sync": sync,
+            }));
+        }
+
         let previous = fs::read_to_string(&resolved).unwrap_or_default();
         let preview_json = json!({
             "path": resolved.to_string_lossy(),
@@ -351,7 +384,12 @@ enum ApprovalWaitError {
 #[cfg(test)]
 mod tests {
     use super::{build_diff_preview, resolve_path};
+    use crate::backend::{ApprovalService, StorageService, WsHub};
     use std::path::Path;
+    use std::sync::atomic::AtomicU8;
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn diff_preview_marks_insertions() {
@@ -374,5 +412,46 @@ mod tests {
         let path = resolve_path(absolute.to_string_lossy().as_ref(), workspace_root)
             .expect("resolved path");
         assert_eq!(path, absolute);
+    }
+
+    #[tokio::test]
+    async fn memory_paths_bypass_approval_and_trigger_sync() {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+        let workspace_root = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).expect("workspace");
+        std::fs::create_dir_all(workspace_root.join("memory")).expect("memory dir");
+        let context = super::FilesystemToolContext {
+            session_id: "session-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            workspace_root: workspace_root.clone(),
+            current_step: Arc::new(AtomicU8::new(1)),
+            tool_calls: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            cancellation_token: CancellationToken::new(),
+            approvals: ApprovalService::new(storage.clone()),
+            storage: storage.clone(),
+            hub: WsHub::new(),
+        };
+
+        let payload = context
+            .write_file("filesystem_write_file", "MEMORY.md", "hello memory")
+            .await
+            .expect("write memory");
+        assert_eq!(
+            payload
+                .get("approval_bypassed")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("memory_sync")
+                .and_then(|value| value.get("updated"))
+                .and_then(|value| value.as_u64()),
+            Some(1)
+        );
+
+        let hits = storage.memory_search("hello", 6, 0.01).expect("search");
+        assert!(!hits.is_empty());
     }
 }
