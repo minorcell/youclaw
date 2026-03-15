@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_workspace;
 pub mod agents;
 pub mod errors;
+pub mod memory_manager;
 pub mod models;
 mod provider;
 mod services;
@@ -19,10 +20,7 @@ use tokio_util::sync::CancellationToken;
 use agent_workspace::AgentWorkspace;
 pub use errors::{AppError, AppResult};
 use models::*;
-use storage::MemoryChunkInput;
 pub use storage::StorageService;
-
-const MEMORY_CHUNK_WINDOW: usize = 24;
 
 #[derive(Clone)]
 pub struct WsHub {

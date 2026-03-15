@@ -1,6 +1,6 @@
 //! `filesystem_write_file` 工具定义。
 //!
-//! 写文件属于高风险操作，真正执行前会走审批流程（见 `filesystem_context.rs`）。
+//! 写文件属于高风险操作：默认走审批流程，记忆白名单路径可自动放行（见 `filesystem_context.rs`）。
 
 use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
@@ -26,7 +26,8 @@ pub fn build_filesystem_write_file_tool(context: FilesystemToolContext) -> Tool 
     let workspace_root = context.workspace_root.to_string_lossy().to_string();
     tool(FILESYSTEM_WRITE_FILE_TOOL_NAME)
         .description(format!(
-            "写入文件（覆盖写，需用户审批）。路径可为绝对路径，或相对 workspace 根目录 `{workspace_root}`。"
+            "写入文件（覆盖写）。路径可为绝对路径，或相对 workspace 根目录 `{workspace_root}`。\
+             记忆白名单路径（MEMORY.md/memory/*.md）自动放行，其他路径需审批。"
         ))
         .raw_schema(json!({
             "type": "object",

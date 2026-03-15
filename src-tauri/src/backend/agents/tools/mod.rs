@@ -10,7 +10,6 @@ mod filesystem_read_file;
 mod filesystem_write_file;
 mod memory_get;
 mod memory_search;
-mod memory_write;
 
 pub use filesystem_context::FilesystemToolContext;
 pub use filesystem_list_dir::{build_filesystem_list_dir_tool, FILESYSTEM_LIST_DIR_TOOL_NAME};
@@ -20,4 +19,3 @@ pub use filesystem_write_file::{
 };
 pub use memory_get::build_memory_get_tool;
 pub use memory_search::build_memory_search_tool;
-pub use memory_write::build_memory_write_tool;

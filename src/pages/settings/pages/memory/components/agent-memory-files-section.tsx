@@ -19,8 +19,10 @@ interface WorkspaceFileReadPayload {
 }
 
 interface MemoryReindexPayload {
-  indexed_chunks: number
-  files_indexed: number
+  scanned: number
+  updated: number
+  deleted: number
+  chunks_indexed: number
 }
 
 function errorText(error: unknown): string {
@@ -137,7 +139,7 @@ export function AgentMemoryFilesSection() {
     try {
       const payload = await getAppClient().request<MemoryReindexPayload>('agent.memory.reindex', {})
       toastSuccess(
-        `记忆索引已更新：${payload.files_indexed} 文件 / ${payload.indexed_chunks} 分片。`,
+        `记忆索引已更新：扫描 ${payload.scanned}，更新 ${payload.updated}，删除 ${payload.deleted}，分片 ${payload.chunks_indexed}。`,
       )
     } catch (error) {
       toastError(errorText(error))
@@ -160,7 +162,7 @@ export function AgentMemoryFilesSection() {
       <CardHeader>
         <CardTitle>记忆文件</CardTitle>
         <CardDescription>
-          直接编辑 `PROFILE.md / MEMORY.md / memory/*.md` 等工作区文件。
+          直接编辑 `USER.md / MEMORY.md / memory/*.md` 等工作区文件。
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-3'>

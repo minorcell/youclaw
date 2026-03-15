@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,7 +10,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { ChatSession, ProviderProfile } from '@/lib/types'
@@ -44,6 +42,7 @@ export function SessionSidebar({
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
   const [renameTitle, setRenameTitle] = useState('')
   const [renameBusy, setRenameBusy] = useState(false)
+  const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<string | null>(null)
 
   const renameTargetSession = useMemo(
     () => sessions.find((session) => session.id === renameSessionId) ?? null,
@@ -56,7 +55,7 @@ export function SessionSidebar({
     normalizedRenameTitle.length > 0 &&
     normalizedRenameTitle !== renameTargetSession.title
 
-  function closeRenameDialog() {
+  function cancelRename() {
     if (renameBusy) return
     setRenameSessionId(null)
     setRenameTitle('')
@@ -70,7 +69,7 @@ export function SessionSidebar({
       setRenameSessionId(null)
       setRenameTitle('')
     } catch {
-      // keep dialog open so user can retry or cancel
+      // keep inline editor open so user can retry or cancel
     } finally {
       setRenameBusy(false)
     }
@@ -108,10 +107,16 @@ export function SessionSidebar({
                         : 'bg-transparent hover:bg-muted/45',
                     )}
                     key={session.id}
-                    onClick={() => onSelectSession(session.id)}
+                    onClick={() => {
+                      if (renameSessionId === session.id) return
+                      setConfirmDeleteSessionId(null)
+                      onSelectSession(session.id)
+                    }}
                     onKeyDown={(event) => {
+                      if (renameSessionId === session.id) return
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
+                        setConfirmDeleteSessionId(null)
                         onSelectSession(session.id)
                       }
                     }}
@@ -119,11 +124,61 @@ export function SessionSidebar({
                     tabIndex={0}
                   >
                     <div className='min-w-0 flex-1 text-left'>
-                      <p className='truncate text-sm font-medium text-foreground'>
-                        {session.title}
-                      </p>
+                      {renameSessionId === session.id ? (
+                        <Input
+                          autoFocus
+                          className='h-7 text-sm font-medium shadow-none focus-visible:ring-0 focus-visible:shadow-none'
+                          disabled={renameBusy}
+                          maxLength={SESSION_TITLE_MAX_LENGTH}
+                          onBlur={() => {
+                            if (renameBusy) return
+                            if (!canConfirmRename) {
+                              cancelRename()
+                              return
+                            }
+                            void confirmRename()
+                          }}
+                          onChange={(event) => setRenameTitle(event.target.value)}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                          }}
+                          onFocus={(event) => {
+                            event.stopPropagation()
+                            event.target.select()
+                          }}
+                          onKeyDown={(event) => {
+                            event.stopPropagation()
+                            if (event.key === 'Enter') {
+                              event.preventDefault()
+                              event.currentTarget.blur()
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelRename()
+                            }
+                          }}
+                          value={renameTitle}
+                        />
+                      ) : (
+                        <p className='truncate text-sm font-medium text-foreground'>
+                          {session.title}
+                        </p>
+                      )}
                     </div>
-                    <DropdownMenu modal={false}>
+                    <DropdownMenu
+                      modal={false}
+                      onOpenChange={(open) => {
+                        if (open) {
+                          setConfirmDeleteSessionId((current) =>
+                            current === session.id ? current : null,
+                          )
+                          return
+                        }
+                        setConfirmDeleteSessionId((current) =>
+                          current === session.id ? null : current,
+                        )
+                      }}
+                    >
                       <DropdownMenuTrigger
                         className={cn(
                           'inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground transition-opacity',
@@ -144,6 +199,8 @@ export function SessionSidebar({
                         <DropdownMenuItem
                           onClick={(event) => {
                             event.stopPropagation()
+                            if (renameBusy) return
+                            setConfirmDeleteSessionId(null)
                             setRenameSessionId(session.id)
                             setRenameTitle(session.title)
                           }}
@@ -154,12 +211,21 @@ export function SessionSidebar({
                         <DropdownMenuItem
                           onClick={(event) => {
                             event.stopPropagation()
-                            onDeleteSession(session.id)
+                          }}
+                          onSelect={(event) => {
+                            event.stopPropagation()
+                            if (confirmDeleteSessionId === session.id) {
+                              setConfirmDeleteSessionId(null)
+                              onDeleteSession(session.id)
+                              return
+                            }
+                            event.preventDefault()
+                            setConfirmDeleteSessionId(session.id)
                           }}
                           variant='destructive'
                         >
                           <Trash2 className='h-4 w-4' />
-                          删除
+                          {confirmDeleteSessionId === session.id ? '确认删除' : '删除'}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -192,54 +258,6 @@ export function SessionSidebar({
           </div>
         </div>
       </aside>
-
-      <Dialog
-        onOpenChange={(open) => {
-          if (!open) {
-            closeRenameDialog()
-          }
-        }}
-        open={renameTargetSession !== null}
-      >
-        <DialogContent className='max-w-sm' showCloseButton={false}>
-          <DialogTitle>确认重命名</DialogTitle>
-          <div className='space-y-3'>
-            <Label htmlFor='rename-session-input'>会话名称</Label>
-            <Input
-              id='rename-session-input'
-              maxLength={SESSION_TITLE_MAX_LENGTH}
-              onChange={(event) => setRenameTitle(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void confirmRename()
-                }
-              }}
-              value={renameTitle}
-            />
-            <p className='text-xs text-muted-foreground'>
-              将会把会话重命名为新标题，确认后立即生效。
-            </p>
-          </div>
-          <div className='flex justify-end gap-2'>
-            <Button
-              disabled={renameBusy}
-              onClick={closeRenameDialog}
-              type='button'
-              variant='outline'
-            >
-              取消
-            </Button>
-            <Button
-              disabled={!canConfirmRename || renameBusy}
-              onClick={() => void confirmRename()}
-              type='button'
-            >
-              {renameBusy ? '保存中...' : '确认重命名'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </TooltipProvider>
   )
 }
