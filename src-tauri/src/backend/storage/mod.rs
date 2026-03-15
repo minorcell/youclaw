@@ -258,7 +258,11 @@ mod tests {
         assert!(build_fts_query("   ").is_err());
         assert_eq!(
             build_fts_query("memory project").expect("query"),
-            "\"memory\" AND \"project\""
+            "\"memory\" OR \"project\""
+        );
+        assert_eq!(
+            build_fts_query("学习 习惯 总结").expect("query"),
+            "\"学习\" OR \"习惯\" OR \"总结\""
         );
     }
 }
