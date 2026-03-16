@@ -1,13 +1,27 @@
 import { Loader2, RefreshCw, Save } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
 import type { WorkspaceFileInfo } from '@/lib/types'
+import {
+  SETTINGS_CARD_CLASSNAME,
+  SETTINGS_CARD_CONTENT_CLASSNAME,
+  SETTINGS_CARD_HEADER_CLASSNAME,
+  SETTINGS_PANEL_CLASSNAME,
+} from '@/pages/settings/lib/ui'
 
 interface WorkspaceFilesPayload {
   files: WorkspaceFileInfo[]
@@ -150,7 +164,7 @@ export function AgentMemoryFilesSection() {
 
   if (loading) {
     return (
-      <div className='rounded-xl bg-background/75 px-4 py-6 text-sm text-muted-foreground'>
+      <div className='rounded-2xl bg-background/80 px-4 py-6 text-sm text-muted-foreground'>
         <Loader2 className='mr-2 inline h-4 w-4 animate-spin' />
         正在加载记忆文件...
       </div>
@@ -158,36 +172,46 @@ export function AgentMemoryFilesSection() {
   }
 
   return (
-    <Card className='bg-background/80'>
-      <CardHeader>
+    <Card className={SETTINGS_CARD_CLASSNAME}>
+      <CardHeader className={SETTINGS_CARD_HEADER_CLASSNAME}>
         <CardTitle>记忆文件</CardTitle>
         <CardDescription>
           直接编辑 `USER.md / MEMORY.md / memory/*.md` 等工作区文件。
         </CardDescription>
       </CardHeader>
-      <CardContent className='space-y-3'>
-        <div className='space-y-1.5'>
+      <CardContent className={SETTINGS_CARD_CONTENT_CLASSNAME}>
+        <div className={`${SETTINGS_PANEL_CLASSNAME} space-y-1.5`}>
           <Label htmlFor='memory-file-select'>文件</Label>
-          <select
-            className='h-9 w-full rounded-md bg-background px-3 text-sm'
-            id='memory-file-select'
-            onChange={(event) => setSelectedPath(event.target.value)}
-            value={selectedPath}
-          >
-            {files.length === 0 ? <option value=''>无文件</option> : null}
-            {files.map((item) => (
-              <option key={item.path} value={item.path}>
-                {item.path}
-              </option>
-            ))}
-          </select>
-          <p className='text-xs text-muted-foreground'>当前文件大小：{selectedFileSize} bytes</p>
+          {files.length === 0 ? (
+            <div className='rounded-lg bg-card/80 px-3 py-2 text-sm text-muted-foreground'>
+              无文件
+            </div>
+          ) : (
+            <Select onValueChange={(value) => setSelectedPath(value ?? '')} value={selectedPath}>
+              <SelectTrigger className='h-9 w-full rounded-lg bg-card/80 shadow-none'>
+                <SelectValue placeholder='选择文件' />
+              </SelectTrigger>
+              <SelectContent>
+                {files.map((item) => (
+                  <SelectItem key={item.path} value={item.path}>
+                    {item.path}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Badge className='bg-card text-foreground'>{selectedFileSize} bytes</Badge>
         </div>
 
-        <div className='space-y-1.5'>
-          <Label htmlFor='memory-file-content'>内容</Label>
+        <div className={`${SETTINGS_PANEL_CLASSNAME} space-y-3`}>
+          <div className='flex items-center justify-between gap-3'>
+            <Label htmlFor='memory-file-content'>内容</Label>
+            {selectedPath ? (
+              <p className='truncate text-xs text-muted-foreground'>{selectedPath}</p>
+            ) : null}
+          </div>
           <Textarea
-            className='min-h-105 font-mono text-xs leading-5'
+            className='min-h-105 rounded-lg border-border/70 bg-card/80 font-mono text-xs leading-5 shadow-none'
             id='memory-file-content'
             onChange={(event) => setFileContent(event.target.value)}
             placeholder={fileLoading ? '读取中...' : '选择文件后可编辑'}
