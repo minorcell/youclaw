@@ -1,22 +1,51 @@
 use super::*;
 use aquaregia::AgentStep;
+use crate::backend::models::SessionApprovalMode;
 
 impl StorageService {
     pub fn list_sessions(&self) -> AppResult<Vec<ChatSession>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, provider_profile_id, created_at, updated_at, last_turn_at
+            "SELECT id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
              FROM chat_sessions
+             WHERE archived_at IS NULL
              ORDER BY COALESCE(last_turn_at, updated_at) DESC, created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
+            let approval_mode_raw = row.get::<_, String>(3)?;
             Ok(ChatSession {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 provider_profile_id: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                last_turn_at: row.get(5)?,
+                approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                last_turn_at: row.get(6)?,
+                archived_at: row.get(7)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_archived_sessions(&self) -> AppResult<Vec<ChatSession>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+             FROM chat_sessions
+             WHERE archived_at IS NOT NULL
+             ORDER BY archived_at DESC, COALESCE(last_turn_at, updated_at) DESC, created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let approval_mode_raw = row.get::<_, String>(3)?;
+            Ok(ChatSession {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                provider_profile_id: row.get(2)?,
+                approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                last_turn_at: row.get(6)?,
+                archived_at: row.get(7)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -25,17 +54,21 @@ impl StorageService {
     pub fn get_session(&self, session_id: &str) -> AppResult<ChatSession> {
         let conn = self.open_connection()?;
         conn.query_row(
-            "SELECT id, title, provider_profile_id, created_at, updated_at, last_turn_at
-             FROM chat_sessions WHERE id = ?1",
+            "SELECT id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+             FROM chat_sessions
+             WHERE id = ?1 AND archived_at IS NULL",
             [session_id],
             |row| {
+                let approval_mode_raw = row.get::<_, String>(3)?;
                 Ok(ChatSession {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     provider_profile_id: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                    last_turn_at: row.get(5)?,
+                    approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                    last_turn_at: row.get(6)?,
+                    archived_at: row.get(7)?,
                 })
             },
         )
@@ -46,15 +79,19 @@ impl StorageService {
     pub fn insert_session(&self, session: &ChatSession) -> AppResult<()> {
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO chat_sessions (id, title, provider_profile_id, created_at, updated_at, last_turn_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO chat_sessions (
+                id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 session.id,
                 session.title,
                 session.provider_profile_id,
+                session.approval_mode.as_str(),
                 session.created_at,
                 session.updated_at,
                 session.last_turn_at,
+                session.archived_at,
             ],
         )?;
         Ok(())
@@ -66,10 +103,33 @@ impl StorageService {
         provider_profile_id: &str,
     ) -> AppResult<()> {
         let conn = self.open_connection()?;
-        conn.execute(
-            "UPDATE chat_sessions SET provider_profile_id = ?2, updated_at = ?3 WHERE id = ?1",
+        let updated = conn.execute(
+            "UPDATE chat_sessions
+             SET provider_profile_id = ?2, updated_at = ?3
+             WHERE id = ?1 AND archived_at IS NULL",
             params![session_id, provider_profile_id, now_timestamp()],
         )?;
+        if updated == 0 {
+            return Err(AppError::NotFound(format!("session `{session_id}`")));
+        }
+        Ok(())
+    }
+
+    pub fn update_session_approval_mode(
+        &self,
+        session_id: &str,
+        approval_mode: SessionApprovalMode,
+    ) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        let updated = conn.execute(
+            "UPDATE chat_sessions
+             SET approval_mode = ?2, updated_at = ?3
+             WHERE id = ?1 AND archived_at IS NULL",
+            params![session_id, approval_mode.as_str(), now_timestamp()],
+        )?;
+        if updated == 0 {
+            return Err(AppError::NotFound(format!("session `{session_id}`")));
+        }
         Ok(())
     }
 
@@ -85,7 +145,9 @@ impl StorageService {
     pub fn update_session_title(&self, session_id: &str, title: &str) -> AppResult<()> {
         let conn = self.open_connection()?;
         let updated = conn.execute(
-            "UPDATE chat_sessions SET title = ?2, updated_at = ?3 WHERE id = ?1",
+            "UPDATE chat_sessions
+             SET title = ?2, updated_at = ?3
+             WHERE id = ?1 AND archived_at IS NULL",
             params![session_id, title, now_timestamp()],
         )?;
         if updated == 0 {
@@ -97,54 +159,39 @@ impl StorageService {
     pub fn touch_session_for_turn(&self, session_id: &str, title: Option<&str>) -> AppResult<()> {
         let conn = self.open_connection()?;
         let now = now_timestamp();
-        if let Some(title) = title {
+        let updated = if let Some(title) = title {
             conn.execute(
-                "UPDATE chat_sessions SET title = ?2, updated_at = ?3, last_turn_at = ?3 WHERE id = ?1",
+                "UPDATE chat_sessions
+                 SET title = ?2, updated_at = ?3, last_turn_at = ?3
+                 WHERE id = ?1 AND archived_at IS NULL",
                 params![session_id, title, now],
-            )?;
+            )?
         } else {
             conn.execute(
-                "UPDATE chat_sessions SET updated_at = ?2, last_turn_at = ?2 WHERE id = ?1",
+                "UPDATE chat_sessions
+                 SET updated_at = ?2, last_turn_at = ?2
+                 WHERE id = ?1 AND archived_at IS NULL",
                 params![session_id, now],
-            )?;
+            )?
+        };
+        if updated == 0 {
+            return Err(AppError::NotFound(format!("session `{session_id}`")));
         }
         Ok(())
     }
 
     pub fn delete_session(&self, session_id: &str) -> AppResult<()> {
         let conn = self.open_connection()?;
-        conn.execute(
-            "DELETE FROM message_marks
-             WHERE message_id IN (SELECT id FROM chat_messages WHERE session_id = ?1)",
-            [session_id],
+        let now = now_timestamp();
+        let updated = conn.execute(
+            "UPDATE chat_sessions
+             SET archived_at = COALESCE(archived_at, ?2), updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, now],
         )?;
-        conn.execute(
-            "DELETE FROM session_memory_state WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute(
-            "DELETE FROM chat_messages WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute("DELETE FROM chat_steps WHERE session_id = ?1", [session_id])?;
-        conn.execute(
-            "DELETE FROM tool_approvals WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute("DELETE FROM chat_turns WHERE session_id = ?1", [session_id])?;
-        conn.execute(
-            "DELETE FROM turn_usage_metrics WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute(
-            "DELETE FROM turn_tool_metrics WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute(
-            "DELETE FROM file_operations WHERE session_id = ?1",
-            [session_id],
-        )?;
-        conn.execute("DELETE FROM chat_sessions WHERE id = ?1", [session_id])?;
+        if updated == 0 {
+            return Err(AppError::NotFound(format!("session `{session_id}`")));
+        }
 
         if self.get_last_opened_session_id()?.as_deref() == Some(session_id) {
             let next = self
@@ -157,12 +204,92 @@ impl StorageService {
         Ok(())
     }
 
+    pub fn restore_session(&self, session_id: &str) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        let archived_at = conn
+            .query_row(
+                "SELECT archived_at FROM chat_sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        match archived_at {
+            None => {
+                return Err(AppError::NotFound(format!("archived session `{session_id}`")));
+            }
+            Some(None) => {
+                return Err(AppError::Validation(
+                    "session is not archived".to_string(),
+                ));
+            }
+            Some(Some(_)) => {}
+        }
+
+        conn.execute(
+            "UPDATE chat_sessions
+             SET archived_at = NULL, updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, now_timestamp()],
+        )?;
+        Ok(())
+    }
+
+    pub fn purge_session(&self, session_id: &str) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        let archived_at = conn
+            .query_row(
+                "SELECT archived_at FROM chat_sessions WHERE id = ?1",
+                [session_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        match archived_at {
+            None => {
+                return Err(AppError::NotFound(format!("archived session `{session_id}`")));
+            }
+            Some(None) => {
+                return Err(AppError::Validation(
+                    "session must be archived before purge".to_string(),
+                ));
+            }
+            Some(Some(_)) => {}
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE settings
+             SET value = NULL
+             WHERE key = 'last_opened_session_id' AND value = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM message_marks
+             WHERE message_id IN (
+               SELECT id FROM chat_messages WHERE session_id = ?1
+             )",
+            [session_id],
+        )?;
+        tx.execute("DELETE FROM turn_tool_metrics WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM turn_usage_metrics WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM chat_steps WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM tool_approvals WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM file_operations WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM session_memory_state WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM chat_messages WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM chat_turns WHERE session_id = ?1", [session_id])?;
+        tx.execute("DELETE FROM chat_sessions WHERE id = ?1", [session_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn list_messages(&self) -> AppResult<Vec<ChatMessage>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, parts_json, turn_id, created_at
-             FROM chat_messages
-             ORDER BY created_at ASC, rowid ASC",
+            "SELECT m.id, m.session_id, m.role, m.parts_json, m.turn_id, m.created_at
+             FROM chat_messages m
+             INNER JOIN chat_sessions s ON s.id = m.session_id
+             WHERE s.archived_at IS NULL
+             ORDER BY m.created_at ASC, m.rowid ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             let parts_json = row.get::<_, String>(3)?;
@@ -187,9 +314,11 @@ impl StorageService {
         let mut stmt = conn.prepare(
             "SELECT m.id, m.session_id, m.role, m.parts_json, m.turn_id, m.created_at
              FROM chat_messages m
+             INNER JOIN chat_sessions s ON s.id = m.session_id
              LEFT JOIN message_marks mm
                ON mm.message_id = m.id AND mm.mark = 'compressed'
              WHERE m.session_id = ?1
+               AND s.archived_at IS NULL
                AND mm.message_id IS NULL
              ORDER BY m.created_at ASC, m.rowid ASC",
         )?;
@@ -259,10 +388,12 @@ impl StorageService {
     pub fn list_messages_for_turn(&self, turn_id: &str) -> AppResult<Vec<ChatMessage>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, parts_json, turn_id, created_at
-             FROM chat_messages
-             WHERE turn_id = ?1
-             ORDER BY created_at ASC, rowid ASC",
+            "SELECT m.id, m.session_id, m.role, m.parts_json, m.turn_id, m.created_at
+             FROM chat_messages m
+             INNER JOIN chat_sessions s ON s.id = m.session_id
+             WHERE m.turn_id = ?1
+               AND s.archived_at IS NULL
+             ORDER BY m.created_at ASC, m.rowid ASC",
         )?;
         let rows = stmt.query_map([turn_id], |row| {
             let parts_json = row.get::<_, String>(3)?;
@@ -283,17 +414,20 @@ impl StorageService {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
             "SELECT
-                step,
-                output_text,
-                reasoning_text,
-                reasoning_parts_json,
-                finish_reason_json,
-                usage_json,
-                tool_calls_json,
-                tool_results_json
-             FROM chat_steps
-             WHERE turn_id = ?1
-             ORDER BY step ASC",
+                cs.step,
+                cs.output_text,
+                cs.reasoning_text,
+                cs.reasoning_parts_json,
+                cs.finish_reason_json,
+                cs.usage_json,
+                cs.tool_calls_json,
+                cs.tool_results_json
+             FROM chat_steps cs
+             INNER JOIN chat_turns t ON t.id = cs.turn_id
+             INNER JOIN chat_sessions s ON s.id = t.session_id
+             WHERE cs.turn_id = ?1
+               AND s.archived_at IS NULL
+             ORDER BY cs.step ASC",
         )?;
         let rows = stmt.query_map([turn_id], |row| {
             let step_num = row.get::<_, i64>(0)? as u8;
@@ -406,9 +540,13 @@ impl StorageService {
     pub fn list_turns(&self) -> AppResult<Vec<ChatTurn>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, status, user_message, output_text, created_at, finished_at, error_message
-             FROM chat_turns
-             ORDER BY created_at DESC",
+            "SELECT
+                t.id, t.session_id, t.status, t.user_message, t.output_text,
+                t.created_at, t.finished_at, t.error_message
+             FROM chat_turns t
+             INNER JOIN chat_sessions s ON s.id = t.session_id
+             WHERE s.archived_at IS NULL
+             ORDER BY t.created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             let status_raw = row.get::<_, String>(2)?;
@@ -483,9 +621,13 @@ impl StorageService {
     pub fn list_approvals(&self) -> AppResult<Vec<ToolApproval>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, turn_id, call_id, action, path, preview_json, status, created_at, resolved_at
-             FROM tool_approvals
-             ORDER BY created_at DESC",
+            "SELECT
+                a.id, a.session_id, a.turn_id, a.call_id, a.action,
+                a.path, a.preview_json, a.status, a.created_at, a.resolved_at
+             FROM tool_approvals a
+             INNER JOIN chat_sessions s ON s.id = a.session_id
+             WHERE s.archived_at IS NULL
+             ORDER BY a.created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             let preview_json = row.get::<_, String>(6)?;
@@ -613,13 +755,39 @@ impl StorageService {
                 |row| row.get::<_, Option<String>>(0),
             )
             .optional()?;
-        Ok(value.flatten())
+        let Some(session_id) = value.flatten() else {
+            return Ok(None);
+        };
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM chat_sessions WHERE id = ?1 AND archived_at IS NULL",
+                [session_id.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if exists {
+            Ok(Some(session_id))
+        } else {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('last_opened_session_id', NULL)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )?;
+            Ok(None)
+        }
     }
 
     pub fn sessions_payload(&self) -> AppResult<SessionsChangedPayload> {
         Ok(SessionsChangedPayload {
             sessions: self.list_sessions()?,
             last_opened_session_id: self.get_last_opened_session_id()?,
+        })
+    }
+
+    pub fn archived_sessions_payload(&self) -> AppResult<ArchivedSessionsPayload> {
+        Ok(ArchivedSessionsPayload {
+            sessions: self.list_archived_sessions()?,
         })
     }
 }
@@ -645,6 +813,22 @@ fn parse_turn_status_column(value: &str, column: usize) -> rusqlite::Result<Turn
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("invalid turn status `{value}`"),
+            )),
+        )
+    })
+}
+
+fn parse_session_approval_mode_column(
+    value: &str,
+    column: usize,
+) -> rusqlite::Result<SessionApprovalMode> {
+    value.parse::<SessionApprovalMode>().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid session approval mode `{value}`"),
             )),
         )
     })

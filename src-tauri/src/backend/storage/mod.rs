@@ -15,15 +15,15 @@ use serde_json::Value;
 
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
-    flatten_provider_profiles, message_from_record, migrate_provider_accounts_from_legacy,
-    normalize_provider_accounts, now_timestamp, AgentConfigPayload, AgentConfigUpdateRequest,
-    BootstrapPayload, ChatMessage, ChatSession, ChatTurn, MemoryReindexPayload, MemorySearchHit,
-    MessageRole, ProviderAccount, ProviderProfile, SessionsChangedPayload, StoredProviders,
-    ToolApproval, TurnStatus, UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem,
-    UsageLogsListRequest, UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
-    UsageProviderStatsItem, UsageProviderStatsPayload, UsageStatsListRequest, UsageSummaryPayload,
-    UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload,
-    USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
+    flatten_provider_profiles, message_from_record, now_timestamp, AgentConfigPayload,
+    AgentConfigUpdateRequest, ArchivedSessionsPayload, BootstrapPayload, ChatMessage, ChatSession,
+    ChatTurn, MemoryReindexPayload, MemorySearchHit, MessageRole, ProviderAccount,
+    ProviderProfile, SessionsChangedPayload, StoredProviders, ToolApproval, TurnStatus,
+    UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,
+    UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
+    UsageProviderStatsItem, UsageProviderStatsPayload, UsageStatsListRequest,
+    UsageSummaryPayload, UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem,
+    UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };
 
 #[derive(Clone)]
@@ -108,21 +108,19 @@ impl StorageService {
         let conn = self.open_connection()?;
         let config = conn.query_row(
             "SELECT
-                max_steps, max_input_tokens, compact_ratio, keep_recent, language
+                max_steps, max_input_tokens, compact_ratio, language
              FROM agent_settings
              WHERE id = 1",
             [],
             |row| {
-                let max_steps = row.get::<_, i64>(0)?.clamp(1, 32) as u8;
-                let max_input_tokens = row.get::<_, i64>(1)?.clamp(1000, 1_000_000) as u32;
+                let max_steps = row.get::<_, i64>(0)?.clamp(8, 128) as u8;
+                let max_input_tokens = row.get::<_, i64>(1)?.clamp(75_000, 200_000) as u32;
                 let compact_ratio = row.get::<_, f64>(2)?.clamp(0.1, 0.95) as f32;
-                let keep_recent = row.get::<_, i64>(3)?.clamp(1, 128) as u32;
-                let language = normalize_language(row.get::<_, String>(4)?);
+                let language = normalize_language(row.get::<_, String>(3)?);
                 Ok(AgentConfigPayload {
                     max_steps,
                     max_input_tokens,
                     compact_ratio,
-                    keep_recent,
                     language,
                 })
             },
@@ -137,16 +135,13 @@ impl StorageService {
         let mut current = self.get_agent_config()?;
 
         if let Some(value) = req.max_steps {
-            current.max_steps = value.clamp(1, 32);
+            current.max_steps = value.clamp(8, 128);
         }
         if let Some(value) = req.max_input_tokens {
-            current.max_input_tokens = value.clamp(1000, 1_000_000);
+            current.max_input_tokens = value.clamp(75_000, 200_000);
         }
         if let Some(value) = req.compact_ratio {
             current.compact_ratio = value.clamp(0.1, 0.95);
-        }
-        if let Some(value) = req.keep_recent {
-            current.keep_recent = value.clamp(1, 128);
         }
         if let Some(value) = req.language {
             current.language = normalize_language(value);
@@ -158,16 +153,14 @@ impl StorageService {
              SET max_steps = ?2,
                  max_input_tokens = ?3,
                  compact_ratio = ?4,
-                 keep_recent = ?5,
-                 language = ?6,
-                 updated_at = ?7
+                 language = ?5,
+                 updated_at = ?6
              WHERE id = ?1",
             params![
                 1i64,
                 current.max_steps as i64,
                 current.max_input_tokens as i64,
                 current.compact_ratio as f64,
-                current.keep_recent as i64,
                 current.language,
                 now_timestamp(),
             ],
@@ -205,6 +198,7 @@ mod tests {
             provider_id: account.id.clone(),
             model_name: "gpt-test".to_string(),
             model: "gpt-test".to_string(),
+            context_window_tokens: None,
         });
         account.models.push(model);
         storage

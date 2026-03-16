@@ -1,38 +1,42 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
-use aquaregia::tool::{Tool, ToolExecError};
 use aquaregia::{
-    AgentStep, ContentPart, ErrorCode, FinishReason, GenerateTextRequest, LlmClient, Message,
-    MessageRole, ReasoningPart, StreamEvent, TextStream, ToolCall, ToolResult, Usage,
+    AgentStep, ErrorCode, FinishReason, GenerateTextRequest, LlmClient, ToolCall, Usage,
 };
-use futures_util::StreamExt;
-use serde_json::{json, Value};
-use tiktoken_rs::{get_bpe_from_model, CoreBPE};
 
+use crate::backend::agents::context_compactor::{
+    compact_in_memory_messages, maybe_compact_session_context,
+};
+use crate::backend::agents::message_builder::{
+    build_turn_messages, inject_bootstrap_guidance, make_assistant_message,
+};
+use crate::backend::agents::stream_collector::collect_step_stream;
+use crate::backend::agents::token_estimator::estimate_tokens_for_messages;
+use crate::backend::agents::tool_dispatcher::handle_tool_calls;
 use crate::backend::agents::tools::{
-    build_filesystem_list_dir_tool, build_filesystem_read_file_tool,
-    build_filesystem_write_file_tool, build_memory_get_tool, build_memory_search_tool,
-    FilesystemToolContext, FILESYSTEM_LIST_DIR_TOOL_NAME, FILESYSTEM_READ_FILE_TOOL_NAME,
-    FILESYSTEM_WRITE_FILE_TOOL_NAME,
+    build_filesystem_tools, build_memory_get_tool, build_memory_search_tool, FilesystemToolContext,
 };
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
-    now_timestamp, record_from_message, title_from_first_prompt, AgentMemoryCompactedPayload,
-    ChatMessage, ChatTurn, ReasoningFinishedPayload, ReasoningStartedPayload,
-    ReasoningTokenPayload, StepFinishedPayload, StepStartedPayload, TokenPayload,
-    ToolFinishedPayload, ToolRequestedPayload, TurnCancelledPayload, TurnFailedPayload,
-    TurnFinishedPayload, TurnStartedPayload, TurnStatus,
+    record_from_message, title_from_first_prompt, ChatMessage, ChatTurn, StepFinishedPayload,
+    StepStartedPayload, TurnCancelledPayload, TurnFailedPayload, TurnFinishedPayload,
+    TurnStartedPayload, TurnStatus,
 };
-use crate::backend::provider::normalize_openai_compatible_endpoint;
+use crate::backend::provider::{normalize_openai_compatible_endpoint, resolve_provider_api_key};
 use crate::backend::BackendState;
 
+#[cfg(test)]
+use crate::backend::agents::context_constants::{STEP_SUMMARY_MARKER, SUMMARY_MARKER};
+#[cfg(test)]
+use crate::backend::agents::summarizer::extract_message_text;
+
 const MAX_OUTPUT_TOKENS: u32 = 1400;
-const SUMMARY_CHAR_LIMIT: usize = 16_000;
-const SUMMARY_MARKER: &str = "[previous-summary]";
-const STEP_SUMMARY_MARKER: &str = "[step-summary]";
+const MIN_MAX_STEPS: u8 = 8;
+const MAX_MAX_STEPS: u8 = 128;
+const MIN_CONTEXT_WINDOW_TOKENS: u32 = 75_000;
+const MAX_CONTEXT_WINDOW_TOKENS: u32 = 200_000;
 
 pub fn spawn_turn(state: BackendState, turn: ChatTurn) {
     tokio::spawn(async move {
@@ -78,6 +82,7 @@ pub fn spawn_turn(state: BackendState, turn: ChatTurn) {
 }
 
 async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
+    // Phase 1: load session/provider/runtime settings and build provider client.
     let session = state.storage.get_session(&turn.session_id)?;
     let provider_id = session
         .provider_profile_id
@@ -87,15 +92,18 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         .get_provider_profile(&provider_id)?
         .ok_or_else(|| AppError::NotFound(format!("provider profile `{provider_id}`")))?;
     let config = state.storage.get_agent_config()?;
-    let max_steps = config.max_steps.max(1);
-    let compact_threshold = ((config.max_input_tokens as f32) * config.compact_ratio)
+    let max_steps = clamp_max_steps(config.max_steps);
+    // Priority: system default (AgentConfig default) < user global setting < model override.
+    let context_window_tokens =
+        resolve_context_window_tokens(config.max_input_tokens, provider.context_window_tokens);
+    let compact_threshold = ((context_window_tokens as f32) * config.compact_ratio)
         .round()
         .max(1.0) as usize;
-    let keep_recent = config.keep_recent as usize;
 
+    let resolved_api_key = resolve_provider_api_key(&provider.api_key)?;
     let (normalized_base_url, chat_path) = normalize_openai_compatible_endpoint(&provider.base_url);
     let builder = LlmClient::openai_compatible(normalized_base_url)
-        .api_key(provider.api_key.clone())
+        .api_key(resolved_api_key)
         .think_tag_parsing(true);
     let client = if let Some(path) = chat_path {
         builder.chat_completions_path(path).build()?
@@ -103,7 +111,14 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         builder.build()?
     };
 
-    let _ = maybe_compact_session_context(&state, &turn.session_id, &provider.model, false)?;
+    // Phase 2: assemble prompt context (with optional pre-turn compaction/bootstrap guidance).
+    let _ = maybe_compact_session_context(
+        &state,
+        &turn.session_id,
+        &provider.model,
+        compact_threshold,
+        false,
+    )?;
     let mut messages = build_turn_messages(&state, &turn.session_id)?;
     let bootstrap_guidance = if state.workspace.should_bootstrap() {
         let guidance = state.workspace.build_bootstrap_guidance(&config.language);
@@ -116,8 +131,9 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         inject_bootstrap_guidance(&mut messages, guidance);
     }
 
+    // Phase 3: initialize tool runtime context.
     let current_step = Arc::new(AtomicU8::new(0));
-    let tool_calls = Arc::new(Mutex::new(VecDeque::new()));
+    let tool_calls = Arc::new(Mutex::new(HashMap::<String, ToolCall>::new()));
     let token = state
         .get_turn_token(&turn.id)
         .ok_or_else(|| AppError::Cancelled("turn token missing".to_string()))?;
@@ -130,21 +146,15 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         tool_calls: Arc::clone(&tool_calls),
         cancellation_token: token.clone(),
         approvals: state.approvals.clone(),
+        approval_mode: session.approval_mode,
         storage: state.storage.clone(),
         hub: state.ws_hub.clone(),
     };
-    let filesystem_list_dir_tool = build_filesystem_list_dir_tool(filesystem_context.clone());
-    let filesystem_read_file_tool = build_filesystem_read_file_tool(filesystem_context.clone());
-    let filesystem_write_file_tool = build_filesystem_write_file_tool(filesystem_context.clone());
     let memory_search_tool = build_memory_search_tool(state.clone());
     let memory_get_tool = build_memory_get_tool(state.clone());
-    let tools = vec![
-        filesystem_list_dir_tool,
-        filesystem_read_file_tool,
-        filesystem_write_file_tool,
-        memory_search_tool,
-        memory_get_tool,
-    ];
+    let mut tools = build_filesystem_tools(filesystem_context);
+    tools.push(memory_search_tool);
+    tools.push(memory_get_tool);
     let tool_map = tools
         .iter()
         .cloned()
@@ -161,14 +171,21 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
     let mut completed_step_count = 0u32;
     let mut finished = false;
 
+    // Phase 4: execute iterative step loop until final assistant output.
     for step in 1..=max_steps {
         current_step.store(step, Ordering::Relaxed);
 
         let estimated_tokens = estimate_tokens_for_messages(&messages, &provider.model);
         if estimated_tokens > compact_threshold {
             if step == 1 {
-                if maybe_compact_session_context(&state, &turn.session_id, &provider.model, true)?
-                    .is_some()
+                if maybe_compact_session_context(
+                    &state,
+                    &turn.session_id,
+                    &provider.model,
+                    compact_threshold,
+                    true,
+                )?
+                .is_some()
                 {
                     messages = build_turn_messages(&state, &turn.session_id)?;
                     if let Some(guidance) = bootstrap_guidance.as_deref() {
@@ -176,7 +193,7 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
                     }
                 }
             } else {
-                let _ = compact_in_memory_messages(&mut messages, keep_recent);
+                let _ = compact_in_memory_messages(&mut messages);
             }
         }
 
@@ -290,242 +307,6 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
     )
 }
 
-struct StepOutput {
-    text: String,
-    reasoning_text: String,
-    reasoning_parts: Vec<ReasoningPart>,
-    usage: Usage,
-    tool_calls: Vec<ToolCall>,
-}
-
-async fn collect_step_stream(
-    state: &BackendState,
-    turn: &ChatTurn,
-    step: u8,
-    mut stream: TextStream,
-    tool_calls: &Arc<Mutex<VecDeque<ToolCall>>>,
-) -> AppResult<StepOutput> {
-    let mut step_text = String::new();
-    let mut step_reasoning_text = String::new();
-    let mut step_reasoning_parts = Vec::<ReasoningPart>::new();
-    let mut reasoning_part_index_by_block = HashMap::<String, usize>::new();
-    let mut step_usage = Usage::default();
-    let mut step_tool_calls = Vec::<ToolCall>::new();
-
-    while let Some(event) = stream.next().await {
-        let event = match event {
-            Ok(event) => event,
-            Err(err) if err.code == ErrorCode::Cancelled => {
-                return Err(AppError::Cancelled(err.message));
-            }
-            Err(err) => return Err(err.into()),
-        };
-
-        match event {
-            StreamEvent::ReasoningStarted {
-                block_id,
-                provider_metadata,
-            } => {
-                let block_id_for_map = block_id.clone();
-                let part_index = step_reasoning_parts.len();
-                step_reasoning_parts.push(ReasoningPart {
-                    text: String::new(),
-                    provider_metadata: provider_metadata.clone(),
-                });
-                reasoning_part_index_by_block.insert(block_id_for_map, part_index);
-                state.ws_hub.emit_turn_event(
-                    &turn.id,
-                    "chat.step.reasoning.started",
-                    ReasoningStartedPayload {
-                        session_id: turn.session_id.clone(),
-                        turn_id: turn.id.clone(),
-                        step,
-                        block_id,
-                        provider_metadata,
-                    },
-                )?;
-            }
-            StreamEvent::ReasoningDelta {
-                block_id,
-                text,
-                provider_metadata,
-            } => {
-                if !text.is_empty() {
-                    step_reasoning_text.push_str(&text);
-                }
-                if let Some(index) = reasoning_part_index_by_block.get(&block_id).copied() {
-                    if let Some(part) = step_reasoning_parts.get_mut(index) {
-                        if !text.is_empty() {
-                            part.text.push_str(&text);
-                        }
-                        if provider_metadata.is_some() {
-                            part.provider_metadata = provider_metadata.clone();
-                        }
-                    }
-                } else {
-                    let part_index = step_reasoning_parts.len();
-                    step_reasoning_parts.push(ReasoningPart {
-                        text: text.clone(),
-                        provider_metadata: provider_metadata.clone(),
-                    });
-                    reasoning_part_index_by_block.insert(block_id.clone(), part_index);
-                }
-                state.ws_hub.emit_turn_event(
-                    &turn.id,
-                    "chat.step.reasoning.token",
-                    ReasoningTokenPayload {
-                        session_id: turn.session_id.clone(),
-                        turn_id: turn.id.clone(),
-                        step,
-                        block_id,
-                        text,
-                        provider_metadata,
-                    },
-                )?;
-            }
-            StreamEvent::ReasoningDone {
-                block_id,
-                provider_metadata,
-            } => {
-                if let Some(index) = reasoning_part_index_by_block.remove(&block_id) {
-                    if let Some(part) = step_reasoning_parts.get_mut(index) {
-                        if provider_metadata.is_some() {
-                            part.provider_metadata = provider_metadata.clone();
-                        }
-                    }
-                }
-                state.ws_hub.emit_turn_event(
-                    &turn.id,
-                    "chat.step.reasoning.finished",
-                    ReasoningFinishedPayload {
-                        session_id: turn.session_id.clone(),
-                        turn_id: turn.id.clone(),
-                        step,
-                        block_id,
-                        provider_metadata,
-                    },
-                )?;
-            }
-            StreamEvent::TextDelta { text } => {
-                if !text.is_empty() {
-                    step_text.push_str(&text);
-                    state.ws_hub.emit_turn_event(
-                        &turn.id,
-                        "chat.step.token",
-                        TokenPayload {
-                            session_id: turn.session_id.clone(),
-                            turn_id: turn.id.clone(),
-                            step,
-                            text,
-                        },
-                    )?;
-                }
-            }
-            StreamEvent::ToolCallReady { call } => {
-                if matches!(
-                    call.tool_name.as_str(),
-                    FILESYSTEM_LIST_DIR_TOOL_NAME
-                        | FILESYSTEM_READ_FILE_TOOL_NAME
-                        | FILESYSTEM_WRITE_FILE_TOOL_NAME
-                ) {
-                    if let Ok(mut queue) = tool_calls.lock() {
-                        queue.push_back(call.clone());
-                    }
-                }
-                step_tool_calls.push(call.clone());
-                state.ws_hub.emit_turn_event(
-                    &turn.id,
-                    "chat.step.tool.requested",
-                    ToolRequestedPayload {
-                        session_id: turn.session_id.clone(),
-                        turn_id: turn.id.clone(),
-                        step,
-                        state: "started".to_string(),
-                        tool_call: call,
-                        approval: None,
-                    },
-                )?;
-            }
-            StreamEvent::Usage { usage } => {
-                step_usage += usage;
-            }
-            StreamEvent::Done => break,
-        }
-    }
-
-    Ok(StepOutput {
-        text: step_text,
-        reasoning_text: step_reasoning_text,
-        reasoning_parts: step_reasoning_parts,
-        usage: step_usage,
-        tool_calls: step_tool_calls,
-    })
-}
-
-async fn handle_tool_calls(
-    state: &BackendState,
-    turn: &ChatTurn,
-    step: u8,
-    step_tool_calls: &[ToolCall],
-    tool_map: &HashMap<String, Tool>,
-    messages: &mut Vec<Message>,
-    new_persisted_messages: &mut Vec<ChatMessage>,
-) -> AppResult<Vec<ToolResult>> {
-    let mut tool_results = Vec::new();
-    for tool_call in step_tool_calls {
-        let selected_tool = tool_map.get(&tool_call.tool_name);
-        let (tool_result, duration_ms) = if let Some(tool) = selected_tool {
-            execute_tool_call(tool, tool_call).await
-        } else {
-            (
-                ToolResult {
-                    call_id: tool_call.call_id.clone(),
-                    output_json: json!({
-                        "error": format!("unknown tool `{}`", tool_call.tool_name),
-                    }),
-                    is_error: true,
-                },
-                0,
-            )
-        };
-        let tool_action = tool_call
-            .args_json
-            .get("action")
-            .and_then(|value| value.as_str())
-            .map(ToOwned::to_owned)
-            .or_else(|| filesystem_tool_action(&tool_call.tool_name).map(ToOwned::to_owned));
-        let _ = state.storage.record_turn_tool_metric(
-            &turn.id,
-            &turn.session_id,
-            &tool_call.tool_name,
-            tool_action.as_deref(),
-            if tool_result.is_error { "error" } else { "ok" },
-            Some(duration_ms),
-            tool_result.is_error,
-        );
-
-        state.ws_hub.emit_turn_event(
-            &turn.id,
-            "chat.step.tool.finished",
-            ToolFinishedPayload {
-                session_id: turn.session_id.clone(),
-                turn_id: turn.id.clone(),
-                step,
-                tool_call: tool_call.clone(),
-                tool_result: tool_result.clone(),
-                duration_ms,
-            },
-        )?;
-        let tool_message = Message::tool_result(tool_result.clone());
-        let persisted_tool_message =
-            record_from_message(&turn.session_id, &turn.id, &tool_message)?;
-        messages.push(tool_message);
-        new_persisted_messages.push(persisted_tool_message);
-        tool_results.push(tool_result);
-    }
-    Ok(tool_results)
-}
-
 fn finalize_turn(
     state: &BackendState,
     turn: &ChatTurn,
@@ -581,366 +362,14 @@ fn emit_step_finished(state: &BackendState, turn: &ChatTurn, step: &AgentStep) -
     )
 }
 
-fn build_turn_messages(state: &BackendState, session_id: &str) -> AppResult<Vec<Message>> {
-    let mut messages = Vec::new();
-    messages.push(Message::system_text(state.workspace.build_system_prompt()?));
-
-    let compressed_summary = state.storage.get_session_compressed_summary(session_id)?;
-    if !compressed_summary.trim().is_empty() {
-        messages.push(Message::user_text(format!(
-            "{SUMMARY_MARKER}\n{}",
-            compressed_summary.trim()
-        )));
-    }
-
-    messages.extend(
-        state
-            .storage
-            .list_active_message_objects_for_session(session_id)?,
-    );
-    Ok(messages)
+fn clamp_max_steps(value: u8) -> u8 {
+    value.clamp(MIN_MAX_STEPS, MAX_MAX_STEPS)
 }
 
-fn inject_bootstrap_guidance(messages: &mut Vec<Message>, guidance: &str) {
-    if guidance.trim().is_empty() {
-        return;
-    }
-    let insert_index = if messages
-        .get(1)
-        .map(|message| message_contains_prefix(message, SUMMARY_MARKER))
-        .unwrap_or(false)
-    {
-        2
-    } else {
-        1
-    };
-    messages.insert(
-        insert_index.min(messages.len()),
-        Message::user_text(guidance.to_string()),
-    );
-}
-
-fn maybe_compact_session_context(
-    state: &BackendState,
-    session_id: &str,
-    model: &str,
-    force: bool,
-) -> AppResult<Option<AgentMemoryCompactedPayload>> {
-    let config = state.storage.get_agent_config()?;
-    let keep_recent = config.keep_recent as usize;
-    let active_records = state.storage.list_active_messages_for_session(session_id)?;
-    if active_records.len() <= keep_recent {
-        return Ok(None);
-    }
-
-    if !force {
-        let assembled = build_turn_messages(state, session_id)?;
-        let estimated = estimate_tokens_for_messages(&assembled, model);
-        let threshold = ((config.max_input_tokens as f32) * config.compact_ratio)
-            .round()
-            .max(1.0) as usize;
-        if estimated <= threshold {
-            return Ok(None);
-        }
-    }
-
-    let split_index = active_records.len().saturating_sub(keep_recent);
-    if split_index == 0 {
-        return Ok(None);
-    }
-
-    let compacted_slice = &active_records[..split_index];
-    let compacted_ids = compacted_slice
-        .iter()
-        .map(|message| message.id.clone())
-        .collect::<Vec<_>>();
-    let addition = summarize_chat_records(compacted_slice);
-    if addition.trim().is_empty() {
-        return Ok(None);
-    }
-
-    let previous = state.storage.get_session_compressed_summary(session_id)?;
-    let merged = merge_summaries(&previous, &addition);
-    state
-        .storage
-        .upsert_session_compressed_summary(session_id, &merged)?;
-    let changed = state.storage.mark_messages(&compacted_ids, "compressed")?;
-    if changed == 0 {
-        return Ok(None);
-    }
-
-    let payload = AgentMemoryCompactedPayload {
-        session_id: session_id.to_string(),
-        compacted_messages: changed,
-        summary_preview: truncate(&merged, 320),
-    };
-    let _ = state.ws_hub.emit("agent.memory.compacted", payload.clone());
-    Ok(Some(payload))
-}
-
-fn compact_in_memory_messages(messages: &mut Vec<Message>, keep_recent: usize) -> Option<String> {
-    if messages.len() <= keep_recent + 2 {
-        return None;
-    }
-
-    let prefix_end = if messages
-        .get(1)
-        .map(|message| message_contains_prefix(message, SUMMARY_MARKER))
-        .unwrap_or(false)
-    {
-        2
-    } else {
-        1
-    };
-
-    if messages.len() <= prefix_end + keep_recent + 1 {
-        return None;
-    }
-
-    let split_index = messages.len().saturating_sub(keep_recent);
-    if split_index <= prefix_end {
-        return None;
-    }
-
-    let removed = messages.drain(prefix_end..split_index).collect::<Vec<_>>();
-    let summary = summarize_messages(&removed);
-    if summary.trim().is_empty() {
-        return None;
-    }
-
-    messages.insert(
-        prefix_end,
-        Message::user_text(format!("{STEP_SUMMARY_MARKER}\n{summary}")),
-    );
-    Some(summary)
-}
-
-fn summarize_chat_records(records: &[ChatMessage]) -> String {
-    let mut lines = Vec::new();
-    for message in records {
-        let content = extract_text_from_parts_value(&message.parts_json);
-        if content.trim().is_empty() {
-            continue;
-        }
-        lines.push(format!(
-            "- [{}] {}",
-            message.role,
-            truncate(content.trim(), 240)
-        ));
-    }
-
-    if lines.is_empty() {
-        return String::new();
-    }
-
-    let body = lines.join("\n");
-    truncate(&body, SUMMARY_CHAR_LIMIT / 2)
-}
-
-fn summarize_messages(messages: &[Message]) -> String {
-    let mut lines = Vec::new();
-    for message in messages {
-        let content = extract_message_text(message);
-        if content.trim().is_empty() {
-            continue;
-        }
-        let role = match message.role() {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::Tool => "tool",
-        };
-        lines.push(format!("- [{role}] {}", truncate(content.trim(), 220)));
-    }
-    truncate(&lines.join("\n"), SUMMARY_CHAR_LIMIT / 2)
-}
-
-fn merge_summaries(previous: &str, addition: &str) -> String {
-    if previous.trim().is_empty() {
-        return truncate(addition.trim(), SUMMARY_CHAR_LIMIT);
-    }
-    let merged = format!(
-        "{previous}\n\n## Compressed at {}\n{addition}",
-        now_timestamp()
-    );
-    truncate(&merged, SUMMARY_CHAR_LIMIT)
-}
-
-fn estimate_tokens_for_messages(messages: &[Message], model: &str) -> usize {
-    let mut joined = String::new();
-    for message in messages {
-        let role = match message.role() {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::Tool => "tool",
-        };
-        joined.push_str(role);
-        joined.push(':');
-        joined.push_str(&extract_message_text(message));
-        joined.push('\n');
-    }
-    estimate_text_tokens(&joined, model)
-}
-
-fn estimate_text_tokens(text: &str, model: &str) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-    if let Some(tokenizer) = tokenizer_for_model(model) {
-        return tokenizer.encode_with_special_tokens(text).len();
-    }
-    text.chars().count().saturating_add(3) / 4
-}
-
-fn tokenizer_for_model(model: &str) -> Option<CoreBPE> {
-    get_bpe_from_model(model).ok()
-}
-
-fn message_contains_prefix(message: &Message, prefix: &str) -> bool {
-    extract_message_text(message).starts_with(prefix)
-}
-
-fn extract_message_text(message: &Message) -> String {
-    let mut text = String::new();
-    for part in message.parts() {
-        match part {
-            ContentPart::Text(value) => {
-                if !value.is_empty() {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(value);
-                }
-            }
-            ContentPart::Reasoning(reasoning) => {
-                if !reasoning.text.is_empty() {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(&reasoning.text);
-                }
-            }
-            ContentPart::ToolCall(call) => {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(&format!("tool_call {} {}", call.tool_name, call.args_json));
-            }
-            ContentPart::ToolResult(result) => {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(&format!("tool_result {}", result.output_json));
-            }
-        }
-    }
-    text
-}
-
-fn extract_text_from_parts_value(parts_json: &Value) -> String {
-    let mut chunks = Vec::new();
-    if let Some(parts) = parts_json.as_array() {
-        for part in parts {
-            if let Some(text) = part.get("Text").and_then(|value| value.as_str()) {
-                if !text.trim().is_empty() {
-                    chunks.push(text.to_string());
-                }
-                continue;
-            }
-            if let Some(text) = part
-                .get("Reasoning")
-                .and_then(|value| value.get("text"))
-                .and_then(|value| value.as_str())
-            {
-                if !text.trim().is_empty() {
-                    chunks.push(text.to_string());
-                }
-                continue;
-            }
-            if let Some(tool_call) = part.get("ToolCall") {
-                chunks.push(format!("tool_call {}", tool_call));
-                continue;
-            }
-            if let Some(tool_result) = part.get("ToolResult") {
-                chunks.push(format!("tool_result {}", tool_result));
-            }
-        }
-    }
-    chunks.join("\n")
-}
-
-fn truncate(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    let mut out = input.chars().take(max_chars).collect::<String>();
-    out.push('…');
-    out
-}
-
-fn make_assistant_message(
-    reasoning_parts: &[ReasoningPart],
-    text: &str,
-    tool_calls: &[ToolCall],
-) -> AppResult<Message> {
-    let mut parts = Vec::new();
-    for reasoning in reasoning_parts {
-        parts.push(ContentPart::Reasoning(reasoning.clone()));
-    }
-    if !text.is_empty() {
-        parts.push(ContentPart::Text(text.to_string()));
-    }
-    for call in tool_calls {
-        parts.push(ContentPart::ToolCall(call.clone()));
-    }
-    if parts.is_empty() {
-        parts.push(ContentPart::Text(String::new()));
-    }
-    Message::new(MessageRole::Assistant, parts)
-        .map_err(|err| AppError::Agent(format!("invalid assistant message: {err}")))
-}
-
-async fn execute_tool_call(tool: &Tool, call: &ToolCall) -> (ToolResult, u64) {
-    if call.tool_name != tool.descriptor.name {
-        return (
-            ToolResult {
-                call_id: call.call_id.clone(),
-                output_json: json!({
-                    "error": format!("unknown tool `{}`", call.tool_name),
-                }),
-                is_error: true,
-            },
-            0,
-        );
-    }
-
-    let started = Instant::now();
-    let execution = tool.executor.execute(call.args_json.clone()).await;
-    let duration_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    let (output_json, is_error) = match execution {
-        Ok(output_json) => (output_json, false),
-        Err(ToolExecError::Execution(message)) => (json!({ "error": message }), true),
-        Err(ToolExecError::Timeout) => (json!({ "error": "timeout" }), true),
-    };
-
-    (
-        ToolResult {
-            call_id: call.call_id.clone(),
-            output_json,
-            is_error,
-        },
-        duration_ms,
-    )
-}
-
-fn filesystem_tool_action(tool_name: &str) -> Option<&'static str> {
-    match tool_name {
-        FILESYSTEM_LIST_DIR_TOOL_NAME => Some("list_dir"),
-        FILESYSTEM_READ_FILE_TOOL_NAME => Some("read_file"),
-        FILESYSTEM_WRITE_FILE_TOOL_NAME => Some("write_file"),
-        _ => None,
-    }
+fn resolve_context_window_tokens(user_default: u32, model_override: Option<u32>) -> u32 {
+    model_override
+        .unwrap_or(user_default)
+        .clamp(MIN_CONTEXT_WINDOW_TOKENS, MAX_CONTEXT_WINDOW_TOKENS)
 }
 
 fn err_status(err: &AppError) -> TurnStatus {
@@ -997,11 +426,13 @@ mod tests {
     use aquaregia::Message;
 
     use super::{
-        compact_in_memory_messages, extract_message_text, STEP_SUMMARY_MARKER, SUMMARY_MARKER,
+        clamp_max_steps, compact_in_memory_messages, extract_message_text,
+        resolve_context_window_tokens, MAX_MAX_STEPS, MIN_MAX_STEPS, STEP_SUMMARY_MARKER,
+        SUMMARY_MARKER,
     };
 
     #[test]
-    fn in_memory_compaction_keeps_recent_messages() {
+    fn in_memory_compaction_keeps_latest_message() {
         let mut messages = vec![
             Message::system_text("system"),
             Message::user_text("u1"),
@@ -1011,12 +442,11 @@ mod tests {
             Message::user_text("u3"),
         ];
 
-        let summary = compact_in_memory_messages(&mut messages, 2).expect("summary");
+        let summary = compact_in_memory_messages(&mut messages).expect("summary");
         assert!(!summary.is_empty());
-        assert_eq!(messages.len(), 4);
+        assert_eq!(messages.len(), 3);
         assert!(extract_message_text(&messages[1]).starts_with(STEP_SUMMARY_MARKER));
-        assert_eq!(extract_message_text(&messages[2]), "a2");
-        assert_eq!(extract_message_text(&messages[3]), "u3");
+        assert_eq!(extract_message_text(&messages[2]), "u3");
     }
 
     #[test]
@@ -1029,8 +459,26 @@ mod tests {
             Message::user_text("u2"),
         ];
 
-        compact_in_memory_messages(&mut messages, 1).expect("summary");
+        compact_in_memory_messages(&mut messages).expect("summary");
         assert!(extract_message_text(&messages[1]).starts_with(SUMMARY_MARKER));
         assert!(extract_message_text(&messages[2]).starts_with(STEP_SUMMARY_MARKER));
+        assert_eq!(extract_message_text(&messages[3]), "u2");
+    }
+
+    #[test]
+    fn clamp_max_steps_keeps_bounds() {
+        assert_eq!(clamp_max_steps(0), MIN_MAX_STEPS);
+        assert_eq!(clamp_max_steps(8), MIN_MAX_STEPS);
+        assert_eq!(clamp_max_steps(64), 64);
+        assert_eq!(clamp_max_steps(u8::MAX), MAX_MAX_STEPS);
+    }
+
+    #[test]
+    fn resolve_context_window_tokens_prefers_model_override() {
+        assert_eq!(resolve_context_window_tokens(120_000, None), 120_000);
+        assert_eq!(
+            resolve_context_window_tokens(120_000, Some(150_000)),
+            150_000
+        );
     }
 }

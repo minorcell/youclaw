@@ -7,14 +7,49 @@ use crate::backend::errors::AppResult;
 
 use super::{now_timestamp, MessageRole, TurnStatus};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionApprovalMode {
+    #[default]
+    Default,
+    FullAccess,
+}
+
+impl SessionApprovalMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::FullAccess => "full_access",
+        }
+    }
+}
+
+impl std::str::FromStr for SessionApprovalMode {
+    type Err = crate::backend::errors::AppError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "default" => Ok(Self::Default),
+            "full_access" => Ok(Self::FullAccess),
+            _ => Err(crate::backend::errors::AppError::Validation(format!(
+                "invalid session approval mode `{value}`"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSession {
     pub id: String,
     pub title: String,
     pub provider_profile_id: Option<String>,
+    #[serde(default)]
+    pub approval_mode: SessionApprovalMode,
     pub created_at: String,
     pub updated_at: String,
     pub last_turn_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +94,12 @@ pub struct CreateSessionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSessionApprovalModeRequest {
+    pub session_id: String,
+    pub approval_mode: SessionApprovalMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BindSessionProviderRequest {
     pub session_id: String,
     pub provider_profile_id: String,
@@ -66,6 +107,16 @@ pub struct BindSessionProviderRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PurgeSessionRequest {
     pub session_id: String,
 }
 
@@ -98,9 +149,11 @@ pub fn new_chat_session(provider_profile_id: Option<String>) -> ChatSession {
         id: Uuid::new_v4().to_string(),
         title: "New chat".to_string(),
         provider_profile_id,
+        approval_mode: SessionApprovalMode::Default,
         created_at: now.clone(),
         updated_at: now,
         last_turn_at: None,
+        archived_at: None,
     }
 }
 
