@@ -63,6 +63,7 @@ export function ProvidersSettingsPage() {
     base_url: string
     api_key: string
     initial_model?: string
+    initial_context_window_tokens?: number | null
   }) {
     setAccountBusy(true)
     try {
@@ -87,6 +88,7 @@ export function ProvidersSettingsPage() {
           provider_id: created.id,
           model_name: initialModelId,
           model: initialModelId,
+          context_window_tokens: value.initial_context_window_tokens ?? null,
         })
         toastSuccess('服务商与首个模型已创建。')
       } else {
@@ -99,7 +101,7 @@ export function ProvidersSettingsPage() {
     }
   }
 
-  async function handleCreateModel(value: { model: string }) {
+  async function handleCreateModel(value: { model: string; context_window_tokens: number | null }) {
     if (!selectedProvider) return
     setModelBusyId('create')
     try {
@@ -107,6 +109,7 @@ export function ProvidersSettingsPage() {
         provider_id: selectedProvider.id,
         model_name: value.model,
         model: value.model,
+        context_window_tokens: value.context_window_tokens ?? null,
       })
       toastSuccess('模型已添加。')
     } catch (error) {
@@ -116,13 +119,17 @@ export function ProvidersSettingsPage() {
     }
   }
 
-  async function handleUpdateModel(modelId: string, value: { model: string }) {
+  async function handleUpdateModel(
+    modelId: string,
+    value: { model: string; context_window_tokens: number | null },
+  ) {
     setModelBusyId(`save:${modelId}`)
     try {
       await getAppClient().request<ProviderModel>('providers.models.update', {
         id: modelId,
         model_name: value.model,
         model: value.model,
+        context_window_tokens: value.context_window_tokens ?? null,
       })
       toastSuccess('模型配置已更新。')
     } catch (error) {

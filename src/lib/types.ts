@@ -15,6 +15,8 @@ export interface WsEnvelope<T = unknown> {
   error?: WsErrorPayload
 }
 
+export type SessionApprovalMode = 'default' | 'full_access'
+
 export interface ProviderProfile {
   id: string
   provider_id: string
@@ -23,6 +25,7 @@ export interface ProviderProfile {
   base_url: string
   api_key: string
   model: string
+  context_window_tokens?: number | null
   created_at: string
   updated_at: string
 }
@@ -32,6 +35,7 @@ export interface ProviderModel {
   provider_id: string
   name: string
   model: string
+  context_window_tokens?: number | null
   created_at: string
   updated_at: string
 }
@@ -50,9 +54,11 @@ export interface ChatSession {
   id: string
   title: string
   provider_profile_id: string | null
+  approval_mode: SessionApprovalMode
   created_at: string
   updated_at: string
   last_turn_at: string | null
+  archived_at?: string | null
 }
 
 export type ContentPart =
@@ -108,7 +114,6 @@ export interface AgentConfigPayload {
   max_steps: number
   max_input_tokens: number
   compact_ratio: number
-  keep_recent: number
   language: string
 }
 
@@ -173,6 +178,10 @@ export interface ProvidersChangedPayload {
 export interface SessionsChangedPayload {
   sessions: ChatSession[]
   last_opened_session_id: string | null
+}
+
+export interface ArchivedSessionsPayload {
+  sessions: ChatSession[]
 }
 
 export interface TurnStartedPayload {
