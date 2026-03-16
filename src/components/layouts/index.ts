@@ -1,2 +1,2 @@
 export { AppLayout } from '@/components/layouts/layout'
-export { SessionSidebar } from '@/components/layouts/sidebar'
+export { AppSidebar } from '@/components/layouts/sidebar'

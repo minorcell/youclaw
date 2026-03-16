@@ -7,6 +7,7 @@ import { MessageThread } from '@/pages/chat/components/message-thread'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
 import { partsToOutputText, partsToReasoningDisplay } from '@/lib/parts'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
@@ -21,6 +22,7 @@ import type {
   ToolRenderUnit,
   TurnRenderUnit,
   TurnStepsListPayload,
+  SessionApprovalMode,
   TurnViewState,
 } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
@@ -171,6 +173,7 @@ function buildStepsFromMessages(
 export function ChatPage() {
   const params = useParams<{ sessionId: string }>()
   const sessionId = params.sessionId ?? null
+  const { error: toastError } = useToastContext()
 
   const { providerAccounts, sessions, approvalsById, setActiveSession, clearError } = useAppStore(
     useShallow((state) => ({
@@ -206,6 +209,7 @@ export function ChatPage() {
   const providers = useMemo(() => flattenProviderProfiles(providerAccounts), [providerAccounts])
 
   const [input, setInput] = useState('')
+  const [approvalModeBusy, setApprovalModeBusy] = useState(false)
   const [persistedStepsByTurnId, setPersistedStepsByTurnId] = useState<Record<string, AgentStep[]>>(
     {},
   )
@@ -384,6 +388,23 @@ export function ChatPage() {
     })
   }
 
+  async function handleApprovalModeChange(approvalMode: SessionApprovalMode) {
+    if (!activeSession || approvalModeBusy || activeSession.approval_mode === approvalMode) {
+      return
+    }
+    setApprovalModeBusy(true)
+    try {
+      await getAppClient().request('sessions.update_approval_mode', {
+        session_id: activeSessionId,
+        approval_mode: approvalMode,
+      })
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setApprovalModeBusy(false)
+    }
+  }
+
   async function handleResolveApproval(approvalId: string, approved: boolean) {
     await getAppClient().request('tool_approvals.resolve', {
       approval_id: approvalId,
@@ -461,7 +482,10 @@ export function ChatPage() {
         <div className='pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-4'>
           <div className='pointer-events-auto w-full max-w-210 select-none'>
             <ChatComposer
+              approvalMode={activeSession.approval_mode}
+              approvalModeBusy={approvalModeBusy}
               input={input}
+              onApprovalModeChange={(mode) => void handleApprovalModeChange(mode)}
               onBindProvider={(id) => void handleBindProvider(id)}
               onCancelTurn={() => void handleCancelTurn()}
               onInputChange={setInput}
