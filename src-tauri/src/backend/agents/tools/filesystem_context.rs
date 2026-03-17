@@ -877,6 +877,7 @@ mod tests {
     use super::{
         apply_ordered_edits, build_diff_preview, validate_path, FileEdit, FilesystemToolContext,
     };
+    use crate::backend::models::SessionApprovalMode;
     use crate::backend::{ApprovalService, StorageService, WsHub};
     use aquaregia::ToolCall;
     use serde_json::{json, Value};
@@ -902,6 +903,7 @@ mod tests {
             tool_calls: Arc::new(Mutex::new(std::collections::HashMap::new())),
             cancellation_token: CancellationToken::new(),
             approvals: ApprovalService::new(storage.clone()),
+            approval_mode: SessionApprovalMode::Default,
             storage: storage.clone(),
             hub: WsHub::new(),
         };

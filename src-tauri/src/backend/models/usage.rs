@@ -163,10 +163,12 @@ pub struct UsageToolStatsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageToolLogItem {
     pub id: String,
+    pub call_id: Option<String>,
     pub turn_id: String,
     pub session_id: String,
     pub tool_name: String,
     pub tool_action: Option<String>,
+    pub args_json: serde_json::Value,
     pub status: String,
     pub duration_ms: Option<u64>,
     pub is_error: bool,

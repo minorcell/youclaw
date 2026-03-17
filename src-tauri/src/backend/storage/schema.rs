@@ -110,8 +110,10 @@ impl StorageService {
                 id TEXT PRIMARY KEY,
                 turn_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
+                call_id TEXT,
                 tool_name TEXT NOT NULL,
                 tool_action TEXT,
+                args_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL,
                 duration_ms INTEGER,
                 is_error INTEGER NOT NULL DEFAULT 0,
@@ -184,6 +186,7 @@ impl StorageService {
             ",
         )?;
         ensure_chat_sessions_approval_mode_column(&conn)?;
+        ensure_turn_tool_metrics_detail_columns(&conn)?;
         conn.execute(
             "INSERT OR IGNORE INTO agent_settings (
                 id, max_steps, max_input_tokens, compact_ratio, language, updated_at
@@ -211,6 +214,25 @@ fn ensure_chat_sessions_approval_mode_column(conn: &Connection) -> AppResult<()>
     if !has_approval_mode {
         conn.execute(
             "ALTER TABLE chat_sessions ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'default'",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn ensure_turn_tool_metrics_detail_columns(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(turn_tool_metrics)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = columns.collect::<Result<Vec<_>, _>>()?;
+
+    if !existing.iter().any(|column| column == "call_id") {
+        conn.execute("ALTER TABLE turn_tool_metrics ADD COLUMN call_id TEXT", [])?;
+    }
+
+    if !existing.iter().any(|column| column == "args_json") {
+        conn.execute(
+            "ALTER TABLE turn_tool_metrics ADD COLUMN args_json TEXT NOT NULL DEFAULT '{}'",
             [],
         )?;
     }

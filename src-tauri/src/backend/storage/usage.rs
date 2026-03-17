@@ -1,3 +1,7 @@
+use std::collections::{HashMap, VecDeque};
+
+use aquaregia::ToolCall;
+
 use super::*;
 
 impl StorageService {
@@ -152,8 +156,10 @@ impl StorageService {
         &self,
         turn_id: &str,
         session_id: &str,
+        call_id: &str,
         tool_name: &str,
         tool_action: Option<&str>,
+        args_json: &serde_json::Value,
         status: &str,
         duration_ms: Option<u64>,
         is_error: bool,
@@ -164,14 +170,18 @@ impl StorageService {
 
         let conn = self.open_connection()?;
         conn.execute(
-            "INSERT INTO turn_tool_metrics (id, turn_id, session_id, tool_name, tool_action, status, duration_ms, is_error, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO turn_tool_metrics (
+                id, turn_id, session_id, call_id, tool_name, tool_action, args_json, status, duration_ms, is_error, created_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 uuid::Uuid::new_v4().to_string(),
                 turn_id,
                 session_id,
+                call_id,
                 tool_name,
                 tool_action,
+                serde_json::to_string(args_json)?,
                 status,
                 duration_ms.map(|value| value as i64),
                 if is_error { 1i64 } else { 0i64 },
@@ -503,13 +513,14 @@ impl StorageService {
     pub fn usage_log_detail(&self, req: UsageLogDetailRequest) -> AppResult<UsageLogDetailPayload> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, turn_id, session_id, tool_name, tool_action, status, duration_ms, is_error, created_at
+            "SELECT id, call_id, turn_id, session_id, tool_name, tool_action, args_json, status, duration_ms, is_error, created_at
              FROM turn_tool_metrics
              WHERE turn_id = ?1
-             ORDER BY created_at DESC, id DESC",
+             ORDER BY created_at ASC, id ASC",
         )?;
         let rows = stmt.query_map([req.turn_id.as_str()], |row| {
-            let duration_ms = row.get::<_, Option<i64>>(6)?.and_then(|value| {
+            let args_json = row.get::<_, String>(6)?;
+            let duration_ms = row.get::<_, Option<i64>>(8)?.and_then(|value| {
                 if value >= 0 {
                     Some(value as u64)
                 } else {
@@ -518,17 +529,22 @@ impl StorageService {
             });
             Ok(UsageToolLogItem {
                 id: row.get(0)?,
-                turn_id: row.get(1)?,
-                session_id: row.get(2)?,
-                tool_name: row.get(3)?,
-                tool_action: row.get(4)?,
-                status: row.get(5)?,
+                call_id: row.get(1)?,
+                turn_id: row.get(2)?,
+                session_id: row.get(3)?,
+                tool_name: row.get(4)?,
+                tool_action: row.get(5)?,
+                args_json: serde_json::from_str(&args_json).unwrap_or(serde_json::json!({})),
+                status: row.get(7)?,
                 duration_ms,
-                is_error: row.get::<_, i64>(7)? != 0,
-                created_at: row.get(8)?,
+                is_error: row.get::<_, i64>(9)? != 0,
+                created_at: row.get(10)?,
             })
         })?;
-        let tools = rows.collect::<Result<Vec<_>, _>>()?;
+        let mut tools = rows.collect::<Result<Vec<_>, _>>()?;
+        let fallback_tool_calls = list_turn_tool_calls(&conn, req.turn_id.as_str())?;
+        hydrate_usage_tool_log_items(&mut tools, &fallback_tool_calls);
+        tools.reverse();
         Ok(UsageLogDetailPayload {
             turn_id: req.turn_id,
             tools,
@@ -558,6 +574,121 @@ fn normalize_usage_pagination(page: Option<u32>, page_size: Option<u32>) -> (u32
         .clamp(1, MAX_USAGE_PAGE_SIZE);
     let offset = page.saturating_sub(1).saturating_mul(page_size);
     (page, page_size, offset)
+}
+
+#[derive(Debug, Clone)]
+struct ToolCallDetailFallback {
+    call_id: String,
+    tool_name: String,
+    tool_action: Option<String>,
+    args_json: serde_json::Value,
+}
+
+fn list_turn_tool_calls(conn: &Connection, turn_id: &str) -> AppResult<Vec<ToolCallDetailFallback>> {
+    let mut stmt = conn.prepare(
+        "SELECT tool_calls_json
+         FROM chat_steps
+         WHERE turn_id = ?1
+         ORDER BY step ASC",
+    )?;
+    let rows = stmt.query_map([turn_id], |row| row.get::<_, String>(0))?;
+    let mut tool_calls = Vec::new();
+
+    for row in rows {
+        let tool_calls_json = row?;
+        let calls = serde_json::from_str::<Vec<ToolCall>>(&tool_calls_json).unwrap_or_default();
+        for call in calls {
+            tool_calls.push(ToolCallDetailFallback {
+                call_id: call.call_id,
+                tool_name: call.tool_name.clone(),
+                tool_action: call
+                    .args_json
+                    .get("action")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned)
+                    .or_else(|| {
+                        crate::backend::agents::tools::filesystem_tool_action(&call.tool_name)
+                            .map(ToOwned::to_owned)
+                    }),
+                args_json: call.args_json,
+            });
+        }
+    }
+
+    Ok(tool_calls)
+}
+
+fn hydrate_usage_tool_log_items(
+    items: &mut [UsageToolLogItem],
+    fallback_tool_calls: &[ToolCallDetailFallback],
+) {
+    let mut fallback_by_call_id = HashMap::<String, ToolCallDetailFallback>::new();
+    let mut fallback_queue_by_tool_name =
+        HashMap::<String, VecDeque<ToolCallDetailFallback>>::new();
+
+    for fallback in fallback_tool_calls {
+        fallback_by_call_id.insert(fallback.call_id.clone(), fallback.clone());
+        fallback_queue_by_tool_name
+            .entry(fallback.tool_name.clone())
+            .or_default()
+            .push_back(fallback.clone());
+    }
+
+    for item in items {
+        let call_id = normalize_optional_string(item.call_id.as_deref());
+        let has_args = has_visible_tool_args(&item.args_json);
+
+        if let Some(call_id) = call_id {
+            if let Some(fallback) = fallback_by_call_id.get(call_id) {
+                if item.tool_action.is_none() {
+                    item.tool_action = fallback.tool_action.clone();
+                }
+                if !has_args {
+                    item.args_json = fallback.args_json.clone();
+                }
+                continue;
+            }
+        }
+
+        if has_args {
+            continue;
+        }
+
+        let Some(queue) = fallback_queue_by_tool_name.get_mut(&item.tool_name) else {
+            continue;
+        };
+        let Some(fallback) = queue.pop_front() else {
+            continue;
+        };
+
+        if item.call_id.is_none() || item.call_id.as_deref().is_some_and(|value| value.is_empty()) {
+            item.call_id = Some(fallback.call_id);
+        }
+        if item.tool_action.is_none() {
+            item.tool_action = fallback.tool_action;
+        }
+        item.args_json = fallback.args_json;
+    }
+}
+
+fn has_visible_tool_args(args_json: &serde_json::Value) -> bool {
+    match args_json {
+        serde_json::Value::Null => false,
+        serde_json::Value::Object(map) => !map.is_empty(),
+        serde_json::Value::Array(values) => !values.is_empty(),
+        _ => true,
+    }
+}
+
+fn normalize_optional_string(value: Option<&str>) -> Option<&str> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
 }
 
 fn usage_range_start(range: &str) -> AppResult<Option<String>> {
@@ -606,6 +737,42 @@ fn build_turn_usage_where_clause(
         return Ok((String::new(), params));
     }
     Ok((format!(" WHERE {}", clauses.join(" AND ")), params))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{hydrate_usage_tool_log_items, ToolCallDetailFallback};
+    use crate::backend::models::UsageToolLogItem;
+
+    #[test]
+    fn hydrate_usage_tool_log_items_backfills_missing_args_from_chat_steps() {
+        let mut items = vec![UsageToolLogItem {
+            id: "metric-1".to_string(),
+            call_id: None,
+            turn_id: "turn-1".to_string(),
+            session_id: "session-1".to_string(),
+            tool_name: "read_text_file".to_string(),
+            tool_action: Some("read_text_file".to_string()),
+            args_json: json!({}),
+            status: "ok".to_string(),
+            duration_ms: Some(12),
+            is_error: false,
+            created_at: "2026-03-17T00:00:00Z".to_string(),
+        }];
+        let fallbacks = vec![ToolCallDetailFallback {
+            call_id: "call-1".to_string(),
+            tool_name: "read_text_file".to_string(),
+            tool_action: Some("read_text_file".to_string()),
+            args_json: json!({ "path": "README.md" }),
+        }];
+
+        hydrate_usage_tool_log_items(&mut items, &fallbacks);
+
+        assert_eq!(items[0].call_id.as_deref(), Some("call-1"));
+        assert_eq!(items[0].args_json, json!({ "path": "README.md" }));
+    }
 }
 
 fn build_usage_range_where_clause(

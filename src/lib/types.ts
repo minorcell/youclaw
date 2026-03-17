@@ -448,10 +448,12 @@ export interface UsageToolStatsPayload {
 
 export interface UsageToolLogItem {
   id: string
+  call_id: string | null
   turn_id: string
   session_id: string
   tool_name: string
   tool_action: string | null
+  args_json: Record<string, unknown>
   status: string
   duration_ms: number | null
   is_error: boolean

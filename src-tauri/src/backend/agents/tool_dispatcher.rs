@@ -68,8 +68,10 @@ pub(crate) async fn handle_tool_calls(
         let _ = state.storage.record_turn_tool_metric(
             &turn.id,
             &turn.session_id,
+            &tool_call.call_id,
             &tool_call.tool_name,
             tool_action.as_deref(),
+            &tool_call.args_json,
             if tool_result.is_error { "error" } else { "ok" },
             Some(duration_ms),
             tool_result.is_error,
