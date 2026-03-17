@@ -98,7 +98,9 @@ export function UsageLogsTab({
               type='button'
             >
               <div className='flex flex-wrap items-center gap-2'>
-                <Badge className={cn(statusBadgeClass(item.status))}>{statusLabel(item.status)}</Badge>
+                <Badge className={cn(statusBadgeClass(item.status))}>
+                  {statusLabel(item.status)}
+                </Badge>
                 <Badge className='bg-card text-foreground'>
                   {item.provider_name ?? '未绑定服务商'}
                 </Badge>
@@ -110,7 +112,9 @@ export function UsageLogsTab({
                 ) : null}
               </div>
 
-              <p className='line-clamp-2 text-sm text-foreground/90'>{item.user_message || '(空 Turn)'}</p>
+              <p className='line-clamp-2 text-sm text-foreground/90'>
+                {item.user_message || '(空 Turn)'}
+              </p>
 
               <div className='flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
                 <span>{formatDateTime(item.started_at)}</span>

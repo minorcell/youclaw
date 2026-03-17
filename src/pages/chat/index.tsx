@@ -8,11 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
-import type {
-  ChatMessage,
-  ProviderProfile,
-  SessionApprovalMode,
-} from '@/lib/types'
+import type { ChatMessage, ProviderProfile, SessionApprovalMode } from '@/lib/types'
 import { buildTurnRenderUnits } from '@/pages/chat/adapters/build-turn-render-units'
 import { useChatScroll } from '@/pages/chat/hooks/use-chat-scroll'
 import { usePersistedTurnSteps } from '@/pages/chat/hooks/use-persisted-turn-steps'

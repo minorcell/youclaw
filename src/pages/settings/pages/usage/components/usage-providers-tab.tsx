@@ -34,9 +34,15 @@ export function UsageProvidersTab({
               <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
               <p className='truncate text-sm font-medium'>{item.provider_name ?? '未识别服务商'}</p>
               <p className='text-xs text-muted-foreground'>Turn {formatNumber(item.turn_count)}</p>
-              <p className='text-xs text-muted-foreground'>成功 {formatNumber(item.completed_count)}</p>
-              <p className='text-xs text-muted-foreground'>失败 {formatNumber(item.failed_count)}</p>
-              <p className='text-xs text-muted-foreground'>Token {formatNumber(item.total_tokens)}</p>
+              <p className='text-xs text-muted-foreground'>
+                成功 {formatNumber(item.completed_count)}
+              </p>
+              <p className='text-xs text-muted-foreground'>
+                失败 {formatNumber(item.failed_count)}
+              </p>
+              <p className='text-xs text-muted-foreground'>
+                Token {formatNumber(item.total_tokens)}
+              </p>
             </div>
           ))
         ) : (

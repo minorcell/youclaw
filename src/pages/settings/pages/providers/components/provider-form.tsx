@@ -146,9 +146,7 @@ export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: Prov
           value={form.base_url}
         />
         {!showBaseUrlError ? (
-          <p className='text-xs text-muted-foreground'>
-            示例：`https://api.minimaxi.com/v1`
-          </p>
+          <p className='text-xs text-muted-foreground'>示例：`https://api.minimaxi.com/v1`</p>
         ) : null}
         {showBaseUrlError ? (
           <p className='text-xs text-destructive'>

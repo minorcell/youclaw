@@ -1,11 +1,4 @@
-import {
-  ArchiveRestore,
-  Clock3,
-  Loader2,
-  RefreshCw,
-  Trash2,
-  Waypoints,
-} from 'lucide-react'
+import { ArchiveRestore, Clock3, Loader2, RefreshCw, Trash2, Waypoints } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -203,7 +196,7 @@ export function ArchiveSettingsPage() {
 
         {archivedSessions.map((session) => {
           const providerLabel = session.provider_profile_id
-            ? providerLabels.get(session.provider_profile_id) ?? '已删除的模型'
+            ? (providerLabels.get(session.provider_profile_id) ?? '已删除的模型')
             : '未绑定模型'
           const isRestoreBusy = busyActionId === `restore:${session.id}`
           const isPurgeBusy = busyActionId === `purge:${session.id}`
@@ -228,7 +221,9 @@ export function ArchiveSettingsPage() {
                   </div>
 
                   {isConfirmingPurge ? (
-                    <p className='mt-3 text-xs text-destructive'>再次点击“确认删除”后将不可恢复。</p>
+                    <p className='mt-3 text-xs text-destructive'>
+                      再次点击“确认删除”后将不可恢复。
+                    </p>
                   ) : null}
                 </div>
 

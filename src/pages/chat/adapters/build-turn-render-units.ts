@@ -1,10 +1,5 @@
 import { partsToOutputText, partsToReasoningDisplay } from '@/lib/parts'
-import type {
-  AgentStep,
-  ChatMessage,
-  ToolApproval,
-  ToolCall,
-} from '@/lib/types'
+import type { AgentStep, ChatMessage, ToolApproval, ToolCall } from '@/lib/types'
 import type { TurnViewState, TimelineItem } from '@/store/types'
 
 import type { StepRenderUnit, ToolRenderUnit, TurnRenderUnit } from '../types'
@@ -101,7 +96,9 @@ function buildStepsFromTimeline(
         isLive: toolItem.state !== 'finished',
         approval:
           toolItem.approval ??
-          Object.values(approvalsById).find((approval) => approval.call_id === toolItem.toolCall.call_id) ??
+          Object.values(approvalsById).find(
+            (approval) => approval.call_id === toolItem.toolCall.call_id,
+          ) ??
           null,
       }))
       return [
@@ -182,7 +179,8 @@ function buildStepsFromMessages(
       argsJson: call.args_json,
       result: allToolResults.get(call.call_id),
       isLive: false,
-      approval: Object.values(approvalsById).find((approval) => approval.call_id === call.call_id) ?? null,
+      approval:
+        Object.values(approvalsById).find((approval) => approval.call_id === call.call_id) ?? null,
     }))
 
     if (outputText || reasoningText || tools.length > 0) {

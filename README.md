@@ -1,43 +1,39 @@
 # YouClaw
 
-让 Agent 成为你。
+让 Agent 真正驻留在你的桌面里。
 
-## 简介
+YouClaw 是一个本地优先的桌面 Agent 工作台，围绕会话、工具调用、审批、记忆和工作区文件来组织 AI 协作。
 
-YouClaw 是一个基于 Tauri + React 构建的桌面应用，旨在让 AI Agent 更好地辅助你的日常工作。
+## 现在有什么
 
-## 技术栈
-
-- **前端**: React 19 + TypeScript + Vite
-- **桌面框架**: Tauri v2
-- **UI**: Tailwind CSS v4 + Base UI
-- **状态管理**: Zustand
-- **路由**: React Router v7
+- 本地桌面应用：Tauri 2 + React 19 + Rust
+- Chat + timeline：查看 step、tool call、审批和结果
+- Workspace：把 `AGENTS.md`、`MEMORY.md`、`memory/*.md` 作为可编辑上下文
+- Memory：本地索引、显式 `search -> get` 召回
+- Tooling：文件读写、搜索、bash 执行、权限模式切换
 
 ## 开发
 
 ```bash
-# 安装依赖
 pnpm install
-
-# 启动开发服务器
-pnpm dev
-
-# 启动 Tauri 开发环境
 pnpm tauri dev
-
-# 构建应用
-pnpm tauri build
 ```
 
-## 其他命令
+## 常用命令
 
 ```bash
-pnpm lint          # 代码检查
-pnpm lint:fix      # 自动修复 lint 问题
-pnpm fmt           # 代码格式化
-pnpm clear-cache   # 清除缓存
+pnpm dev
+pnpm build
+pnpm tauri build
+npx tsc --noEmit
+cd src-tauri && cargo check
 ```
+
+## 技术栈
+
+- Frontend: React 19, TypeScript, Vite, Zustand, Tailwind CSS v4
+- Desktop: Tauri 2
+- Backend: Rust, axum WebSocket, rusqlite
 
 ## License
 

@@ -16,7 +16,10 @@ export function groupMessages(messages: ChatMessage[]): Record<string, ChatMessa
   }, {})
 }
 
-export function mergeUniqueMessages(messages: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+export function mergeUniqueMessages(
+  messages: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
   if (incoming.length === 0) {
     return messages
   }
@@ -45,7 +48,10 @@ export function upsertTimelineItem(items: TimelineItem[], nextItem: TimelineItem
   return clone
 }
 
-export function getOrCreateTurnView(state: Pick<AppStoreData, 'turnsById'>, turn: ChatTurn): TurnViewState {
+export function getOrCreateTurnView(
+  state: Pick<AppStoreData, 'turnsById'>,
+  turn: ChatTurn,
+): TurnViewState {
   return (
     state.turnsById[turn.id] ?? {
       turn,
@@ -71,7 +77,9 @@ export function buildActiveTurnIdBySession(turns: ChatTurn[]): Record<string, st
   )
 }
 
-export function buildTurnMapFromBootstrap(payload: BootstrapPayload): Record<string, TurnViewState> {
+export function buildTurnMapFromBootstrap(
+  payload: BootstrapPayload,
+): Record<string, TurnViewState> {
   return Object.fromEntries(
     payload.turns.map((turn) => [
       turn.id,

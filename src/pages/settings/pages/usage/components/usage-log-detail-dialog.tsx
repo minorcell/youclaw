@@ -44,7 +44,9 @@ export function UsageLogDetailDialog({
           {item ? (
             <>
               <div className='flex flex-wrap items-center gap-2'>
-                <Badge className={cn(statusBadgeClass(item.status))}>{statusLabel(item.status)}</Badge>
+                <Badge className={cn(statusBadgeClass(item.status))}>
+                  {statusLabel(item.status)}
+                </Badge>
                 <Badge className='bg-card text-foreground'>
                   {item.provider_name ?? '未绑定服务商'}
                 </Badge>

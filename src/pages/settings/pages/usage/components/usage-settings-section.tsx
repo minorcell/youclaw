@@ -16,10 +16,7 @@ import type {
   UsageSummaryPayload,
   UsageToolStatsPayload,
 } from '@/lib/types'
-import {
-  SETTINGS_CARD_CLASSNAME,
-  SETTINGS_CARD_CONTENT_CLASSNAME,
-} from '@/pages/settings/lib/ui'
+import { SETTINGS_CARD_CLASSNAME, SETTINGS_CARD_CONTENT_CLASSNAME } from '@/pages/settings/lib/ui'
 
 import { UsageLogDetailDialog } from './usage-log-detail-dialog'
 import { UsageLogsTab } from './usage-logs-tab'
@@ -386,7 +383,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
       </Card>
 
       <UsageLogDetailDialog
-        detail={selectedLogItem ? detailsByTurnId[selectedLogItem.turn_id] ?? null : null}
+        detail={selectedLogItem ? (detailsByTurnId[selectedLogItem.turn_id] ?? null) : null}
         item={selectedLogItem}
         loading={selectedLogItem ? detailLoadingTurnId === selectedLogItem.turn_id : false}
         onOpenChange={(open) => {

@@ -64,6 +64,8 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 [[package]]
 name = "aquaregia"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f2fd92dc52a38fbb141ab3c74ddfb6b5de2328230788ef0925457a8a43f74d"
 dependencies = [
  "aquaregia-macros",
  "async-stream",
@@ -85,6 +87,8 @@ dependencies = [
 [[package]]
 name = "aquaregia-macros"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "925a9a41b58673ccfe5c55fe655c773205fbea378dfe574b32c4e3152548d189"
 dependencies = [
  "proc-macro2",
  "quote",
