@@ -7,27 +7,21 @@
 //!
 //! 具体工具实现放在各自模块中（如 `list_directory.rs` / `write_file.rs`）。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
+use std::ops::Deref;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use aquaregia::ToolCall;
 use glob::Pattern;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde_json::{json, Value};
 use similar::{ChangeTag, TextDiff};
-use tokio::sync::oneshot;
-use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::{SessionApprovalMode, ToolApproval, ToolRequestedPayload};
-use crate::backend::{ApprovalService, StorageService, WsHub};
+
+use super::tool_runtime::ToolRuntimeContext;
 
 /// `read_text_file` head/tail line limit.
 pub const MAX_HEAD_TAIL_LIMIT: usize = 1000;
@@ -38,14 +32,10 @@ pub const MAX_SEARCH_RESULTS: usize = 500;
 
 /// Prevent oversized tool outputs from bloating UI/model context.
 pub(crate) const MAX_TOOL_OUTPUT_CHARS: usize = 24_000;
-/// Approval timeout for mutating operations.
-const APPROVAL_TIMEOUT_SECS: u64 = 600;
 /// Preview diff max lines for approval payloads.
 const MAX_DIFF_PREVIEW_LINES: usize = 240;
 /// Optional extra allowed roots env variable.
 const FS_ALLOWED_ROOTS_ENV: &str = "YOUCLAW_FS_ALLOWED_ROOTS";
-/// Internal field injected at runtime to bind tool call id safely.
-pub(crate) const INTERNAL_TOOL_CALL_ID_FIELD: &str = "__youclaw_call_id";
 /// Tool-phase ignored directories to reduce noisy traversal.
 const TOOL_IGNORED_DIRS: [&str; 13] = [
     ".git",
@@ -74,26 +64,17 @@ pub struct FileEdit {
 /// Shared runtime context for filesystem tools.
 #[derive(Clone)]
 pub struct FilesystemToolContext {
-    /// Session id for audit/event correlation.
-    pub session_id: String,
-    /// Turn id for audit/event correlation.
-    pub turn_id: String,
+    pub runtime: ToolRuntimeContext,
     /// Workspace root; relative paths are resolved from this root.
     pub workspace_root: PathBuf,
-    /// Current step index used by timeline events.
-    pub current_step: Arc<AtomicU8>,
-    /// Tool-call registry keyed by `call_id`, used for strong binding in tool executors.
-    pub tool_calls: Arc<Mutex<HashMap<String, ToolCall>>>,
-    /// Cancellation signal for approval waits.
-    pub cancellation_token: CancellationToken,
-    /// Approval service used by mutating operations.
-    pub approvals: ApprovalService,
-    /// Session-scoped approval mode for filesystem mutations.
-    pub approval_mode: SessionApprovalMode,
-    /// Storage service for metrics/audit.
-    pub storage: StorageService,
-    /// Websocket hub for tool events.
-    pub hub: WsHub,
+}
+
+impl Deref for FilesystemToolContext {
+    type Target = ToolRuntimeContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
 }
 
 impl FilesystemToolContext {
@@ -189,42 +170,6 @@ impl FilesystemToolContext {
             tool_call_id,
         )
         .await
-    }
-
-    pub fn should_skip_mutation_approval(&self) -> bool {
-        matches!(self.approval_mode, SessionApprovalMode::FullAccess)
-    }
-
-    /// 通过内部注入的 `call_id` 绑定本次工具执行对应的 `ToolCall`。
-    pub(crate) fn claim_tool_call(
-        &self,
-        tool_name: &str,
-        tool_call_id: Option<&str>,
-    ) -> AppResult<ToolCall> {
-        let tool_call_id = tool_call_id.ok_or_else(|| {
-            AppError::Agent(format!(
-                "missing internal `{INTERNAL_TOOL_CALL_ID_FIELD}` for tool `{tool_name}`"
-            ))
-        })?;
-
-        let mut registry = self
-            .tool_calls
-            .lock()
-            .map_err(|_| AppError::Agent("tool call registry lock poisoned".to_string()))?;
-        let call = registry.remove(tool_call_id).ok_or_else(|| {
-            AppError::Agent(format!(
-                "tool call binding not found: id=`{tool_call_id}`, tool=`{tool_name}`"
-            ))
-        })?;
-
-        if call.tool_name != tool_name {
-            return Err(AppError::Agent(format!(
-                "tool call binding mismatch: id=`{tool_call_id}`, expected=`{tool_name}`, actual=`{}`",
-                call.tool_name
-            )));
-        }
-
-        Ok(call)
     }
 }
 
@@ -808,76 +753,11 @@ pub(crate) fn search_directory_recursive(
     Ok(())
 }
 
-/// 等待人工审批结果，支持取消与超时。
-pub(crate) async fn wait_for_approval(
-    receiver: oneshot::Receiver<bool>,
-    cancellation_token: &CancellationToken,
-) -> Result<bool, ApprovalWaitError> {
-    tokio::select! {
-        _ = cancellation_token.cancelled() => Err(ApprovalWaitError::Cancelled),
-        result = timeout(Duration::from_secs(APPROVAL_TIMEOUT_SECS), receiver) => {
-            match result {
-                Ok(Ok(value)) => Ok(value),
-                Ok(Err(_)) => Err(ApprovalWaitError::ChannelClosed),
-                Err(_) => Err(ApprovalWaitError::TimedOut),
-            }
-        }
-    }
-}
-
-/// 注册审批请求并等待审批结果。
-pub(crate) async fn await_approval(
-    context: &FilesystemToolContext,
-    tool_call: &ToolCall,
-    approval: &ToolApproval,
-) -> AppResult<bool> {
-    let receiver = context.approvals.register_pending(approval.clone())?;
-
-    context.hub.emit_turn_event(
-        &context.turn_id,
-        "chat.step.tool.requested",
-        ToolRequestedPayload {
-            session_id: context.session_id.clone(),
-            turn_id: context.turn_id.clone(),
-            step: context.current_step.load(Ordering::Relaxed),
-            state: "awaiting_approval".to_string(),
-            tool_call: tool_call.clone(),
-            approval: Some(approval.clone()),
-        },
-    )?;
-
-    match wait_for_approval(receiver, &context.cancellation_token).await {
-        Ok(value) => Ok(value),
-        Err(ApprovalWaitError::Cancelled) => {
-            let _ = context.approvals.mark_status(&approval.id, "cancelled");
-            Err(AppError::Cancelled(
-                "turn cancelled while waiting for approval".to_string(),
-            ))
-        }
-        Err(ApprovalWaitError::TimedOut) => {
-            let _ = context.approvals.mark_status(&approval.id, "timed_out");
-            Err(AppError::Cancelled("approval timed out".to_string()))
-        }
-        Err(ApprovalWaitError::ChannelClosed) => {
-            let _ = context.approvals.mark_status(&approval.id, "cancelled");
-            Err(AppError::Cancelled("approval channel closed".to_string()))
-        }
-    }
-}
-
-/// 人工审批等待阶段的错误类型。
-pub(crate) enum ApprovalWaitError {
-    Cancelled,
-    TimedOut,
-    ChannelClosed,
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_ordered_edits, build_diff_preview, validate_path, FileEdit, FilesystemToolContext,
-    };
-    use crate::backend::models::SessionApprovalMode;
+    use super::{apply_ordered_edits, build_diff_preview, validate_path, FileEdit, FilesystemToolContext};
+    use crate::backend::agents::tools::ToolRuntimeContext;
+    use crate::backend::models::{new_chat_session, SessionApprovalMode};
     use crate::backend::{ApprovalService, StorageService, WsHub};
     use aquaregia::ToolCall;
     use serde_json::{json, Value};
@@ -894,18 +774,23 @@ mod tests {
         let workspace_root = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace_root).expect("workspace");
         std::fs::create_dir_all(workspace_root.join("memory")).expect("memory dir");
+        let mut session = new_chat_session(None);
+        session.id = "session-1".to_string();
+        storage.insert_session(&session).expect("insert session");
 
         let context = FilesystemToolContext {
-            session_id: "session-1".to_string(),
-            turn_id: "turn-1".to_string(),
+            runtime: ToolRuntimeContext {
+                session_id: "session-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                current_step: Arc::new(AtomicU8::new(1)),
+                tool_calls: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                cancellation_token: CancellationToken::new(),
+                approvals: ApprovalService::new(storage.clone()),
+                approval_mode: SessionApprovalMode::Default,
+                storage: storage.clone(),
+                hub: WsHub::new(),
+            },
             workspace_root: workspace_root.clone(),
-            current_step: Arc::new(AtomicU8::new(1)),
-            tool_calls: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            cancellation_token: CancellationToken::new(),
-            approvals: ApprovalService::new(storage.clone()),
-            approval_mode: SessionApprovalMode::Default,
-            storage: storage.clone(),
-            hub: WsHub::new(),
         };
 
         (context, storage, workspace_root)

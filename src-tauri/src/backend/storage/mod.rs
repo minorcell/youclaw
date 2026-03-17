@@ -1,6 +1,7 @@
 mod memory;
 mod providers;
 mod schema;
+mod shell;
 mod sessions;
 mod usage;
 

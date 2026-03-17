@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 
 use crate::backend::agents::tool_result_processor::ToolResultProcessor;
 use crate::backend::agents::tools::{
-    filesystem_tool_action, is_filesystem_tool, INTERNAL_TOOL_CALL_ID_FIELD,
+    requires_tool_call_binding, tool_action, INTERNAL_TOOL_CALL_ID_FIELD,
 };
 use crate::backend::errors::AppResult;
 use crate::backend::models::{record_from_message, ChatMessage, ChatTurn, ToolFinishedPayload};
@@ -37,7 +37,7 @@ pub(crate) async fn handle_tool_calls(
     for tool_call in step_tool_calls {
         let selected_tool = tool_map.get(&tool_call.tool_name);
         let (mut tool_result, duration_ms) = if let Some(tool) = selected_tool {
-            let execution_args = if is_filesystem_tool(&tool_call.tool_name) {
+            let execution_args = if requires_tool_call_binding(&tool_call.tool_name) {
                 with_internal_tool_call_id(&tool_call.args_json, &tool_call.call_id)
             } else {
                 tool_call.args_json.clone()
@@ -64,7 +64,7 @@ pub(crate) async fn handle_tool_calls(
             .get("action")
             .and_then(|value| value.as_str())
             .map(ToOwned::to_owned)
-            .or_else(|| filesystem_tool_action(&tool_call.tool_name).map(ToOwned::to_owned));
+            .or_else(|| tool_action(&tool_call.tool_name).map(ToOwned::to_owned));
         let _ = state.storage.record_turn_tool_metric(
             &turn.id,
             &turn.session_id,

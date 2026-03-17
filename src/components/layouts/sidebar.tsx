@@ -101,7 +101,7 @@ export function AppSidebar({
     <TooltipProvider delay={200}>
       <aside className='flex h-full flex-col overflow-hidden'>
         <div className='px-4 pt-2'>
-          <p className='text-sm font-semibold tracking-[0.12em] text-foreground/75'>youclaw</p>
+          <p className='text-2xl font-semibold tracking-[0.12em] text-foreground/75'>YouClaw</p>
         </div>
 
         <div className='no-scrollbar mt-1 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-4'>

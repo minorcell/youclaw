@@ -4,8 +4,6 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { ChatComposer } from '@/pages/chat/components/chat-composer'
 import { MessageThread } from '@/pages/chat/components/message-thread'
-import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
@@ -26,6 +24,8 @@ import type {
   TurnViewState,
 } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
+
+import { ToolApprovalCard } from './components/tool-approval-card'
 
 const EMPTY_MESSAGES: ChatMessage[] = []
 const EMPTY_TURNS: TurnViewState[] = []
@@ -443,36 +443,13 @@ export function ChatPage() {
             {pendingApprovals.length > 0 ? (
               <div className='mt-6 space-y-3 select-text'>
                 {pendingApprovals.map((approval) => (
-                  <Card
-                    className='max-w-[76ch] rounded-2xl border-border/70 bg-card/80 px-4 py-3 shadow-none'
+                  <ToolApprovalCard
                     key={approval.id}
-                  >
-                    <div className='flex items-center justify-between gap-2'>
-                      <p className='truncate text-sm font-medium text-foreground'>
-                        {approval.path}
-                      </p>
-                      <Badge>{approval.action}</Badge>
-                    </div>
-                    <pre className='mt-2 max-h-40 overflow-auto rounded-xl bg-muted/70 p-3 text-[11px] leading-5 text-foreground/80'>
-                      {approval.preview_json.diff ?? 'No diff preview'}
-                    </pre>
-                    <div className='mt-3 flex gap-2'>
-                      <button
-                        className='rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs hover:bg-muted'
-                        onClick={() => void handleResolveApproval(approval.id, true)}
-                        type='button'
-                      >
-                        允许
-                      </button>
-                      <button
-                        className='rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs hover:bg-muted'
-                        onClick={() => void handleResolveApproval(approval.id, false)}
-                        type='button'
-                      >
-                        拒绝
-                      </button>
-                    </div>
-                  </Card>
+                    approval={approval}
+                    onResolveApproval={(approvalId, approved) =>
+                      void handleResolveApproval(approvalId, approved)
+                    }
+                  />
                 ))}
               </div>
             ) : null}

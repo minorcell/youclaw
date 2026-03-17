@@ -69,7 +69,7 @@ pub struct ToolApproval {
     pub turn_id: String,
     pub call_id: String,
     pub action: String,
-    pub path: String,
+    pub subject: String,
     pub preview_json: Value,
     pub status: String,
     pub created_at: String,
@@ -190,7 +190,7 @@ pub fn new_tool_approval(
     turn_id: impl Into<String>,
     call_id: impl Into<String>,
     action: impl Into<String>,
-    path: impl Into<String>,
+    subject: impl Into<String>,
     preview_json: Value,
 ) -> ToolApproval {
     ToolApproval {
@@ -199,7 +199,7 @@ pub fn new_tool_approval(
         turn_id: turn_id.into(),
         call_id: call_id.into(),
         action: action.into(),
-        path: path.into(),
+        subject: subject.into(),
         preview_json,
         status: "pending".to_string(),
         created_at: now_timestamp(),

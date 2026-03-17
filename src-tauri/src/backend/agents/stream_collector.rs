@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use aquaregia::{ErrorCode, ReasoningPart, StreamEvent, TextStream, ToolCall, Usage};
 use futures_util::StreamExt;
 
-use crate::backend::agents::tools::is_filesystem_tool;
+use crate::backend::agents::tools::requires_tool_call_binding;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     ChatTurn, ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload,
@@ -152,7 +152,7 @@ pub(crate) async fn collect_step_stream(
                 }
             }
             StreamEvent::ToolCallReady { call } => {
-                if is_filesystem_tool(&call.tool_name) {
+                if requires_tool_call_binding(&call.tool_name) {
                     // Filesystem executors later claim by id; duplicate ids are treated as protocol errors.
                     let mut registry = tool_calls.lock().map_err(|_| {
                         AppError::Agent("tool call registry lock poisoned".to_string())

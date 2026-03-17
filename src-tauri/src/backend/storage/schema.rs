@@ -81,6 +81,21 @@ impl StorageService {
                 bytes_written INTEGER,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS shell_executions (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                call_id TEXT,
+                command TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                status TEXT NOT NULL,
+                exit_code INTEGER,
+                signal INTEGER,
+                duration_ms INTEGER,
+                stdout_bytes INTEGER,
+                stderr_bytes INTEGER,
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS turn_usage_metrics (
                 turn_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
@@ -173,6 +188,8 @@ impl StorageService {
             ON turn_tool_metrics (turn_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_turn_tool_metrics_tool
             ON turn_tool_metrics (tool_name, tool_action, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_shell_executions_turn
+            ON shell_executions (turn_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_chat_steps_turn
             ON chat_steps (turn_id, step);
             CREATE INDEX IF NOT EXISTS idx_chat_sessions_archived_last_turn

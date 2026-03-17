@@ -13,9 +13,10 @@ use crate::backend::memory_manager::{
 use crate::backend::models::new_tool_approval;
 
 use super::filesystem_context::{
-    await_approval, build_mutation_preview, read_text_if_exists, validate_path,
-    write_file_content_atomic, FilesystemToolContext,
+    build_mutation_preview, read_text_if_exists, validate_path, write_file_content_atomic,
+    FilesystemToolContext,
 };
+use super::tool_runtime::await_approval;
 
 pub const WRITE_FILE_TOOL_NAME: &str = "write_file";
 
@@ -102,7 +103,7 @@ pub(crate) async fn execute_write_file(
         resolved.to_string_lossy().to_string(),
         preview_json,
     );
-    let decision = await_approval(context, &tool_call, &approval).await?;
+    let decision = await_approval(&context.runtime, &tool_call, &approval).await?;
 
     if !decision {
         context.storage.record_file_operation(

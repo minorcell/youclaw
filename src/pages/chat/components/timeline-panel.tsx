@@ -1,9 +1,10 @@
-import { Clock3, FolderCode, Hammer, ShieldAlert } from 'lucide-react'
+import { Clock3, FolderCode, Hammer } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import type { TurnViewState } from '@/lib/types'
+
+import { ToolApprovalCard } from './tool-approval-card'
 
 interface TimelinePanelProps {
   turn: TurnViewState | null
@@ -58,33 +59,10 @@ export function TimelinePanel({ turn, onResolveApproval }: TimelinePanelProps) {
                     {JSON.stringify(item.toolCall.args_json, null, 2)}
                   </pre>
                   {item.approval ? (
-                    <div className='rounded-3xl border border-border/70 bg-accent/35 p-4'>
-                      <div className='flex items-center gap-2 text-accent-foreground'>
-                        <ShieldAlert className='h-4 w-4' />
-                        <span className='text-sm font-medium'>Write approval required</span>
-                      </div>
-                      <p className='mt-2 text-xs text-accent-foreground/90'>{item.approval.path}</p>
-                      <pre className='mt-3 max-h-48 overflow-auto rounded-2xl bg-background/75 p-3 text-[11px] leading-5 text-foreground/85'>
-                        {item.approval.preview_json.diff ?? 'No diff preview'}
-                      </pre>
-                      {item.approval.status === 'pending' ? (
-                        <div className='mt-3 flex gap-2'>
-                          <Button onClick={() => onResolveApproval(item.approval!.id, true)}>
-                            Approve
-                          </Button>
-                          <Button
-                            onClick={() => onResolveApproval(item.approval!.id, false)}
-                            variant='secondary'
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                      ) : (
-                        <p className='mt-3 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground'>
-                          {item.approval.status}
-                        </p>
-                      )}
-                    </div>
+                    <ToolApprovalCard
+                      approval={item.approval}
+                      onResolveApproval={onResolveApproval}
+                    />
                   ) : null}
                   {item.toolResult ? (
                     <div>
@@ -103,7 +81,7 @@ export function TimelinePanel({ turn, onResolveApproval }: TimelinePanelProps) {
           ))
         ) : (
           <Card className='p-5 text-sm text-muted-foreground'>
-            发起一次对话后，这里会显示 step、tool 调用和写文件审批。
+            发起一次对话后，这里会显示 step、tool 调用和工具审批。
           </Card>
         )}
       </div>

@@ -10,10 +10,11 @@ use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::new_tool_approval;
 
 use super::filesystem_context::{
-    apply_ordered_edits, await_approval, build_mutation_preview, create_unified_diff,
-    read_text_if_exists, truncate, validate_path, write_file_content_atomic, FileEdit,
-    FilesystemToolContext, MAX_TOOL_OUTPUT_CHARS,
+    apply_ordered_edits, build_mutation_preview, create_unified_diff, read_text_if_exists,
+    truncate, validate_path, write_file_content_atomic, FileEdit, FilesystemToolContext,
+    MAX_TOOL_OUTPUT_CHARS,
 };
+use super::tool_runtime::await_approval;
 
 pub const EDIT_FILE_TOOL_NAME: &str = "edit_file";
 
@@ -112,7 +113,7 @@ pub(crate) async fn execute_edit_file(
         resolved.to_string_lossy().to_string(),
         preview_json,
     );
-    let decision = await_approval(context, &tool_call, &approval).await?;
+    let decision = await_approval(&context.runtime, &tool_call, &approval).await?;
 
     if !decision {
         context.storage.record_file_operation(

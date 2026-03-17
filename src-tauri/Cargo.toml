@@ -34,8 +34,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
-tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 tokio-util = "0.7"
+libc = "0.2"
 uuid = { version = "1", features = ["serde", "v4"] }
 tiktoken-rs = "0.9.1"
 

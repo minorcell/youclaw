@@ -87,12 +87,18 @@ export interface ToolApproval {
   turn_id: string
   call_id: string
   action: string
-  path: string
+  subject: string
   preview_json: {
+    kind?: 'file_diff' | 'command'
     path?: string
     diff?: string
     old_excerpt?: string
     new_excerpt?: string
+    command?: string
+    cwd?: string
+    timeout_ms?: number
+    risk_flags?: string[]
+    description?: string
   }
   status: string
   created_at: string

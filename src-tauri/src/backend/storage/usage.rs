@@ -607,7 +607,7 @@ fn list_turn_tool_calls(conn: &Connection, turn_id: &str) -> AppResult<Vec<ToolC
                     .and_then(|value| value.as_str())
                     .map(ToOwned::to_owned)
                     .or_else(|| {
-                        crate::backend::agents::tools::filesystem_tool_action(&call.tool_name)
+                        crate::backend::agents::tools::tool_action(&call.tool_name)
                             .map(ToOwned::to_owned)
                     }),
                 args_json: call.args_json,

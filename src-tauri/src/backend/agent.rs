@@ -16,7 +16,8 @@ use crate::backend::agents::stream_collector::collect_step_stream;
 use crate::backend::agents::token_estimator::estimate_tokens_for_messages;
 use crate::backend::agents::tool_dispatcher::handle_tool_calls;
 use crate::backend::agents::tools::{
-    build_filesystem_tools, build_memory_get_tool, build_memory_search_tool, FilesystemToolContext,
+    build_bash_exec_tool, build_filesystem_tools, build_memory_get_tool, build_memory_search_tool,
+    FilesystemToolContext, ToolRuntimeContext, BashToolContext,
 };
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
@@ -138,10 +139,9 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         .get_turn_token(&turn.id)
         .ok_or_else(|| AppError::Cancelled("turn token missing".to_string()))?;
 
-    let filesystem_context = FilesystemToolContext {
+    let tool_runtime = ToolRuntimeContext {
         session_id: turn.session_id.clone(),
         turn_id: turn.id.clone(),
-        workspace_root: state.workspace.root().to_path_buf(),
         current_step: Arc::clone(&current_step),
         tool_calls: Arc::clone(&tool_calls),
         cancellation_token: token.clone(),
@@ -150,9 +150,18 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         storage: state.storage.clone(),
         hub: state.ws_hub.clone(),
     };
+    let filesystem_context = FilesystemToolContext {
+        runtime: tool_runtime.clone(),
+        workspace_root: state.workspace.root().to_path_buf(),
+    };
     let memory_search_tool = build_memory_search_tool(state.clone());
     let memory_get_tool = build_memory_get_tool(state.clone());
+    let bash_tool = build_bash_exec_tool(BashToolContext {
+        runtime: tool_runtime,
+        workspace_root: state.workspace.root().to_path_buf(),
+    });
     let mut tools = build_filesystem_tools(filesystem_context);
+    tools.push(bash_tool);
     tools.push(memory_search_tool);
     tools.push(memory_get_tool);
     let tool_map = tools
