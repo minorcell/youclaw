@@ -1,27 +1,44 @@
-use super::super::*;
+use std::path::PathBuf;
 
-use crate::backend::memory_manager::{BuiltinFtsMemoryManager, MemorySearchManager};
+use crate::backend::agents::memory::{BuiltinFtsMemoryManager, MemorySearchManager};
+use crate::backend::models::requests::{MemoryGetRequest, MemorySearchRequest};
+use crate::backend::models::responses::{
+    MemoryGetPayload, MemoryReindexPayload, MemorySearchPayload,
+};
+use crate::backend::{AppResult, StorageService};
 
-impl BackendState {
-    fn memory_manager(&self) -> BuiltinFtsMemoryManager {
-        BuiltinFtsMemoryManager::new(self.storage.clone(), self.workspace.root().to_path_buf())
+#[derive(Clone)]
+pub(crate) struct MemoryService {
+    storage: StorageService,
+    workspace_root: PathBuf,
+}
+
+impl MemoryService {
+    pub fn new(storage: StorageService, workspace_root: PathBuf) -> Self {
+        Self {
+            storage,
+            workspace_root,
+        }
     }
 
-    pub fn memory_search(&self, req: MemorySearchRequest) -> AppResult<MemorySearchPayload> {
-        self.memory_manager()
+    fn manager(&self) -> BuiltinFtsMemoryManager {
+        BuiltinFtsMemoryManager::new(self.storage.clone(), self.workspace_root.clone())
+    }
+
+    pub fn search(&self, req: MemorySearchRequest) -> AppResult<MemorySearchPayload> {
+        self.manager()
             .search(&req.query, req.max_results, req.min_score)
     }
 
-    pub fn memory_get(&self, req: MemoryGetRequest) -> AppResult<MemoryGetPayload> {
-        self.memory_manager()
-            .read_file(&req.path, req.from, req.lines)
+    pub fn get(&self, req: MemoryGetRequest) -> AppResult<MemoryGetPayload> {
+        self.manager().read_file(&req.path, req.from, req.lines)
     }
 
-    pub fn reindex_memory(&self) -> AppResult<MemoryReindexPayload> {
-        self.memory_manager().sync(true, None)
+    pub fn reindex(&self) -> AppResult<MemoryReindexPayload> {
+        self.manager().sync(true, None)
     }
 
-    pub fn sync_memory_paths(&self, changed_paths: &[String]) -> AppResult<MemoryReindexPayload> {
-        self.memory_manager().sync(false, Some(changed_paths))
+    pub fn sync_paths(&self, changed_paths: &[String]) -> AppResult<MemoryReindexPayload> {
+        self.manager().sync(false, Some(changed_paths))
     }
 }

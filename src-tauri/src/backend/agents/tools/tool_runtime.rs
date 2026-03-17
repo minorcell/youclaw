@@ -9,7 +9,8 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::{SessionApprovalMode, ToolApproval, ToolRequestedPayload};
+use crate::backend::models::domain::{SessionApprovalMode, ToolApproval};
+use crate::backend::models::events::ToolRequestedPayload;
 use crate::backend::{ApprovalService, StorageService, WsHub};
 
 /// Approval timeout for privileged operations.

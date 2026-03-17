@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::now_timestamp;
+use super::requests::{
+    CreateProviderModelRequest, CreateProviderRequest, UpdateProviderModelRequest,
+    UpdateProviderRequest,
+};
 
 const MIN_CONTEXT_WINDOW_TOKENS: u32 = 75_000;
 const MAX_CONTEXT_WINDOW_TOKENS: u32 = 200_000;
@@ -45,51 +49,6 @@ pub struct ProviderAccount {
     pub models: Vec<ProviderModel>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateProviderRequest {
-    pub profile_name: String,
-    pub base_url: String,
-    pub api_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateProviderRequest {
-    pub id: String,
-    pub profile_name: String,
-    pub base_url: String,
-    pub api_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateProviderModelRequest {
-    pub provider_id: String,
-    pub model_name: String,
-    pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_window_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateProviderModelRequest {
-    pub id: String,
-    pub model_name: String,
-    pub model: String,
-    // `None` => keep unchanged; `Some(None)` => clear; `Some(Some(v))` => set.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_window_tokens: Option<Option<u32>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeleteProviderModelRequest {
-    pub id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TestProviderModelRequest {
-    pub provider_id: String,
-    pub model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

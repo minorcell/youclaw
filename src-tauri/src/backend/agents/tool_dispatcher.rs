@@ -18,7 +18,8 @@ use crate::backend::agents::tools::{
     requires_tool_call_binding, tool_action, INTERNAL_TOOL_CALL_ID_FIELD,
 };
 use crate::backend::errors::AppResult;
-use crate::backend::models::{record_from_message, ChatMessage, ChatTurn, ToolFinishedPayload};
+use crate::backend::models::domain::{record_from_message, ChatMessage, ChatTurn};
+use crate::backend::models::events::ToolFinishedPayload;
 use crate::backend::BackendState;
 
 /// Dispatch all tool calls in the order emitted by the model.

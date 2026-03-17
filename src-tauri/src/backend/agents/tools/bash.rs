@@ -126,7 +126,9 @@ async fn execute_bash_exec(
 
     let tool_call = context.claim_tool_call(BASH_EXEC_TOOL_NAME, tool_call_id)?;
     let resolved_cwd = resolve_command_cwd(context, cwd)?;
-    let timeout_ms = timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1000, MAX_TIMEOUT_MS);
+    let timeout_ms = timeout_ms
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(1000, MAX_TIMEOUT_MS);
     let risk_flags = detect_risk_flags(command);
     let approval = new_tool_approval(
         context.session_id.clone(),
@@ -268,7 +270,9 @@ async fn run_shell_command(
 fn validate_command(command: &str) -> AppResult<()> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
-        return Err(AppError::Validation("shell command cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "shell command cannot be empty".to_string(),
+        ));
     }
     if trimmed.contains('\0') {
         return Err(AppError::Validation(
@@ -347,7 +351,9 @@ fn spawn_shell_child(command: &str, cwd: &Path) -> AppResult<Child> {
         .map_err(|err| AppError::Agent(format!("failed to spawn bash: {err}")))
 }
 
-async fn read_stream(stream: Option<impl tokio::io::AsyncRead + Unpin>) -> AppResult<CapturedOutput> {
+async fn read_stream(
+    stream: Option<impl tokio::io::AsyncRead + Unpin>,
+) -> AppResult<CapturedOutput> {
     let Some(mut stream) = stream else {
         return Ok(CapturedOutput {
             text: String::new(),
@@ -449,7 +455,10 @@ fn has_standalone_ampersand(command: &str) -> bool {
         if *ch != '&' {
             continue;
         }
-        let prev = index.checked_sub(1).and_then(|item| chars.get(item)).copied();
+        let prev = index
+            .checked_sub(1)
+            .and_then(|item| chars.get(item))
+            .copied();
         let next = chars.get(index + 1).copied();
         if prev == Some('&') || next == Some('&') {
             continue;

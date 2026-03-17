@@ -1,8 +1,32 @@
-use super::super::*;
 use aquaregia::{GenerateTextRequest, LlmClient};
 
-impl BackendState {
-    pub fn get_provider_profile(&self, provider_id: &str) -> AppResult<Option<ProviderProfile>> {
+use super::{list_provider_snapshot, publish_providers_changed, publish_sessions_changed};
+use crate::backend::models::domain::{
+    new_provider_account, update_provider_account, update_provider_model, ProviderAccount,
+    ProviderModel, ProviderProfile,
+};
+use crate::backend::models::requests::{
+    CreateProviderModelRequest, CreateProviderRequest, TestProviderModelRequest,
+    UpdateProviderModelRequest, UpdateProviderRequest,
+};
+use crate::backend::models::responses::ProvidersChangedPayload;
+use crate::backend::providers::{
+    normalize_openai_compatible_endpoint, resolve_provider_api_key, validate_provider_api_key_input,
+};
+use crate::backend::{now_timestamp, AppError, AppResult, StorageService, WsHub};
+
+#[derive(Clone)]
+pub(crate) struct ProviderService {
+    storage: StorageService,
+    hub: WsHub,
+}
+
+impl ProviderService {
+    pub fn new(storage: StorageService, hub: WsHub) -> Self {
+        Self { storage, hub }
+    }
+
+    pub fn get_profile(&self, provider_id: &str) -> AppResult<Option<ProviderProfile>> {
         Ok(self
             .storage
             .list_provider_profiles()?
@@ -10,7 +34,7 @@ impl BackendState {
             .find(|profile| profile.id == provider_id))
     }
 
-    pub fn get_provider_account(&self, provider_id: &str) -> AppResult<Option<ProviderAccount>> {
+    pub fn get_account(&self, provider_id: &str) -> AppResult<Option<ProviderAccount>> {
         Ok(self
             .storage
             .list_provider_accounts()?
@@ -18,17 +42,17 @@ impl BackendState {
             .find(|provider| provider.id == provider_id))
     }
 
-    pub async fn create_provider(&self, req: CreateProviderRequest) -> AppResult<ProviderAccount> {
+    pub async fn create(&self, req: CreateProviderRequest) -> AppResult<ProviderAccount> {
         validate_provider_account_request(&req.profile_name, &req.base_url, &req.api_key)?;
         let account = new_provider_account(req);
         let mut accounts = self.storage.list_provider_accounts()?;
         accounts.push(account.clone());
         self.storage.save_provider_accounts(&accounts)?;
-        self.publish_providers_changed()?;
+        self.publish_changed()?;
         Ok(account)
     }
 
-    pub async fn update_provider(&self, req: UpdateProviderRequest) -> AppResult<ProviderAccount> {
+    pub async fn update(&self, req: UpdateProviderRequest) -> AppResult<ProviderAccount> {
         validate_provider_account_request(&req.profile_name, &req.base_url, &req.api_key)?;
         let mut accounts = self.storage.list_provider_accounts()?;
         let index = accounts
@@ -38,14 +62,11 @@ impl BackendState {
         let account = update_provider_account(&accounts[index], req);
         accounts[index] = account.clone();
         self.storage.save_provider_accounts(&accounts)?;
-        self.publish_providers_changed()?;
+        self.publish_changed()?;
         Ok(account)
     }
 
-    pub async fn create_provider_model(
-        &self,
-        req: CreateProviderModelRequest,
-    ) -> AppResult<ProviderModel> {
+    pub async fn create_model(&self, req: CreateProviderModelRequest) -> AppResult<ProviderModel> {
         validate_provider_model_request(&req.model_name, &req.model)?;
         let mut accounts = self.storage.list_provider_accounts()?;
         let index = accounts
@@ -54,18 +75,15 @@ impl BackendState {
             .ok_or_else(|| AppError::NotFound(format!("provider account `{}`", req.provider_id)))?;
         let account = &accounts[index];
         test_provider_connection(&account.base_url, &account.api_key, &req.model).await?;
-        let model = new_provider_model(req);
+        let model = crate::backend::models::domain::new_provider_model(req);
         accounts[index].models.push(model.clone());
         accounts[index].updated_at = now_timestamp();
         self.storage.save_provider_accounts(&accounts)?;
-        self.publish_providers_changed()?;
+        self.publish_changed()?;
         Ok(model)
     }
 
-    pub async fn update_provider_model(
-        &self,
-        req: UpdateProviderModelRequest,
-    ) -> AppResult<ProviderModel> {
+    pub async fn update_model(&self, req: UpdateProviderModelRequest) -> AppResult<ProviderModel> {
         validate_provider_model_request(&req.model_name, &req.model)?;
         let mut accounts = self.storage.list_provider_accounts()?;
         let mut found: Option<(usize, usize)> = None;
@@ -83,11 +101,11 @@ impl BackendState {
         accounts[account_index].models[model_index] = model.clone();
         accounts[account_index].updated_at = now_timestamp();
         self.storage.save_provider_accounts(&accounts)?;
-        self.publish_providers_changed()?;
+        self.publish_changed()?;
         Ok(model)
     }
 
-    pub fn delete_provider_model(&self, model_id: &str) -> AppResult<()> {
+    pub fn delete_model(&self, model_id: &str) -> AppResult<()> {
         let mut accounts = self.storage.list_provider_accounts()?;
         let mut found: Option<(usize, usize)> = None;
         for (account_index, account) in accounts.iter().enumerate() {
@@ -108,29 +126,28 @@ impl BackendState {
         accounts[account_index].updated_at = now_timestamp();
         self.storage.save_provider_accounts(&accounts)?;
         self.storage.clear_session_provider_binding(model_id)?;
-        self.publish_providers_changed()?;
-        self.publish_sessions_changed()?;
+        self.publish_changed()?;
+        publish_sessions_changed(&self.storage, &self.hub)?;
         Ok(())
     }
 
-    pub async fn test_provider_model(&self, req: TestProviderModelRequest) -> AppResult<()> {
+    pub async fn test_model(&self, req: TestProviderModelRequest) -> AppResult<()> {
         if req.model.trim().is_empty() {
             return Err(AppError::Validation("model cannot be empty".to_string()));
         }
         let provider = self
-            .get_provider_account(&req.provider_id)?
+            .get_account(&req.provider_id)?
             .ok_or_else(|| AppError::NotFound(format!("provider account `{}`", req.provider_id)))?;
         test_provider_connection(&provider.base_url, &provider.api_key, &req.model).await?;
         Ok(())
     }
 
-    pub fn list_provider_snapshot(&self) -> AppResult<ProvidersChangedPayload> {
-        let provider_accounts = self.storage.list_provider_accounts()?;
-        let provider_profiles = flatten_provider_profiles(&provider_accounts);
-        Ok(ProvidersChangedPayload {
-            provider_profiles,
-            provider_accounts,
-        })
+    pub fn list_snapshot(&self) -> AppResult<ProvidersChangedPayload> {
+        list_provider_snapshot(&self.storage)
+    }
+
+    pub fn publish_changed(&self) -> AppResult<()> {
+        publish_providers_changed(&self.storage, &self.hub)
     }
 }
 
@@ -140,7 +157,7 @@ fn validate_provider_account_request(name: &str, base_url: &str, api_key: &str) 
             "provider fields cannot be empty".to_string(),
         ));
     }
-    provider::validate_provider_api_key_input(api_key)?;
+    validate_provider_api_key_input(api_key)?;
     Ok(())
 }
 
@@ -154,8 +171,8 @@ fn validate_provider_model_request(model_name: &str, model: &str) -> AppResult<(
 }
 
 async fn test_provider_connection(base_url: &str, api_key: &str, model: &str) -> AppResult<()> {
-    let resolved_api_key = provider::resolve_provider_api_key(api_key)?;
-    let (normalized_base_url, chat_path) = provider::normalize_openai_compatible_endpoint(base_url);
+    let resolved_api_key = resolve_provider_api_key(api_key)?;
+    let (normalized_base_url, chat_path) = normalize_openai_compatible_endpoint(base_url);
     let builder = LlmClient::openai_compatible(normalized_base_url)
         .api_key(resolved_api_key)
         .think_tag_parsing(true);

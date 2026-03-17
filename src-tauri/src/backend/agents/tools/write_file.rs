@@ -6,10 +6,10 @@ use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::backend::errors::{AppError, AppResult};
-use crate::backend::memory_manager::{
+use crate::backend::agents::memory::{
     resolve_relative_memory_path_from_absolute, BuiltinFtsMemoryManager, MemorySearchManager,
 };
+use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::new_tool_approval;
 
 use super::filesystem_context::{

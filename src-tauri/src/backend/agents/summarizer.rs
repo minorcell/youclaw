@@ -4,7 +4,7 @@ use aquaregia::{ContentPart, Message, MessageRole};
 use serde_json::Value;
 
 use crate::backend::agents::context_constants::SUMMARY_CHAR_LIMIT;
-use crate::backend::models::{now_timestamp, ChatMessage};
+use crate::backend::models::domain::{now_timestamp, ChatMessage};
 
 /// Summarize persisted chat records into short bullet lines.
 pub(crate) fn summarize_chat_records(records: &[ChatMessage]) -> String {

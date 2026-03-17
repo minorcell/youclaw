@@ -13,9 +13,10 @@ use futures_util::StreamExt;
 
 use crate::backend::agents::tools::requires_tool_call_binding;
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::{
-    ChatTurn, ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload,
-    TokenPayload, ToolRequestedPayload,
+use crate::backend::models::domain::ChatTurn;
+use crate::backend::models::events::{
+    ReasoningFinishedPayload, ReasoningStartedPayload, ReasoningTokenPayload, TokenPayload,
+    ToolRequestedPayload,
 };
 use crate::backend::BackendState;
 

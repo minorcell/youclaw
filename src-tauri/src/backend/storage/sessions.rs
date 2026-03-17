@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::models::SessionApprovalMode;
+use crate::backend::models::domain::SessionApprovalMode;
 use aquaregia::AgentStep;
 
 impl StorageService {

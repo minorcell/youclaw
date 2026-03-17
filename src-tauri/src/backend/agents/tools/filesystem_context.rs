@@ -755,9 +755,11 @@ pub(crate) fn search_directory_recursive(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_ordered_edits, build_diff_preview, validate_path, FileEdit, FilesystemToolContext};
+    use super::{
+        apply_ordered_edits, build_diff_preview, validate_path, FileEdit, FilesystemToolContext,
+    };
     use crate::backend::agents::tools::ToolRuntimeContext;
-    use crate::backend::models::{new_chat_session, SessionApprovalMode};
+    use crate::backend::models::domain::{new_chat_session, SessionApprovalMode};
     use crate::backend::{ApprovalService, StorageService, WsHub};
     use aquaregia::ToolCall;
     use serde_json::{json, Value};

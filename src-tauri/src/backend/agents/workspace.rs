@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use chrono::{SecondsFormat, Utc};
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::WorkspaceFileInfo;
+use crate::backend::models::responses::WorkspaceFileInfo;
 
 const BOOTSTRAP_CONTEXT_FILES: [&str; 7] = [
     "AGENTS.md",

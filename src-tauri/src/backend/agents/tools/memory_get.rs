@@ -6,8 +6,8 @@ use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::backend::models::MemoryGetRequest;
-use crate::backend::BackendState;
+use crate::backend::models::requests::MemoryGetRequest;
+use crate::backend::services::MemoryService;
 
 #[derive(Debug, Deserialize)]
 struct MemoryGetToolArgs {
@@ -24,7 +24,7 @@ struct MemoryGetToolArgs {
 /// 构建 `memory_get` 工具。
 ///
 /// 用于按路径 + 行区间读取记忆文件片段，便于模型增量获取上下文。
-pub fn build_memory_get_tool(state: BackendState) -> Tool {
+pub fn build_memory_get_tool(memory: MemoryService) -> Tool {
     tool("memory_get")
         .description("读取记忆文件片段。参数：path，可选 from/lines。")
         .raw_schema(json!({
@@ -38,12 +38,12 @@ pub fn build_memory_get_tool(state: BackendState) -> Tool {
             "required": ["path"]
         }))
         .execute_raw(move |value| {
-            let state = state.clone();
+            let memory = memory.clone();
             async move {
                 let args = serde_json::from_value::<MemoryGetToolArgs>(value)
                     .map_err(|err| ToolExecError::Execution(format!("invalid args: {err}")))?;
-                let payload = state
-                    .memory_get(MemoryGetRequest {
+                let payload = memory
+                    .get(MemoryGetRequest {
                         path: args.path,
                         from: args.from,
                         lines: args.lines,
