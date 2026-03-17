@@ -1,16 +1,7 @@
-import { BarChart3, Clock3, Database, ListFilter, Loader2, Wrench } from 'lucide-react'
+import { BarChart3, Database, ListFilter, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
@@ -18,168 +9,49 @@ import { flattenProviderProfiles } from '@/lib/provider-profiles'
 import type {
   ProviderAccount,
   UsageLogDetailPayload,
+  UsageLogItem,
   UsageLogsPayload,
   UsageModelStatsPayload,
   UsageProviderStatsPayload,
-  UsageStatsRange,
   UsageSummaryPayload,
   UsageToolStatsPayload,
 } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import {
+  SETTINGS_CARD_CLASSNAME,
+  SETTINGS_CARD_CONTENT_CLASSNAME,
+} from '@/pages/settings/lib/ui'
+
+import { UsageLogDetailDialog } from './usage-log-detail-dialog'
+import { UsageLogsTab } from './usage-logs-tab'
+import { UsageModelsTab } from './usage-models-tab'
+import { UsageProvidersTab } from './usage-providers-tab'
+import { UsageSummaryCard } from './usage-summary-card'
+import {
+  DEFAULT_PAGE_SIZE,
+  type UsageTab,
+  type UsageModelOption,
+  errorMessageFromUnknown,
+} from './usage-shared'
+import { UsageToolsTab } from './usage-tools-tab'
 
 interface UsageSettingsSectionProps {
   providerAccounts: ProviderAccount[]
-}
-
-type UsageTab = 'logs' | 'providers' | 'models' | 'tools'
-
-type DetailFilter = 'all' | 'on' | 'off'
-
-const DEFAULT_PAGE_SIZE = 20
-
-const rangeOptions: Array<{ value: UsageStatsRange; label: string }> = [
-  { value: '24h', label: '24h' },
-  { value: '7d', label: '7天' },
-  { value: '30d', label: '30天' },
-  { value: 'all', label: '全部' },
-]
-
-const statusOptions: Array<{ value: string; label: string }> = [
-  { value: 'all', label: '全部状态' },
-  { value: 'running', label: '运行中' },
-  { value: 'completed', label: '已完成' },
-  { value: 'failed', label: '失败' },
-  { value: 'cancelled', label: '已取消' },
-]
-
-const detailFilterOptions: Array<{ value: DetailFilter; label: string }> = [
-  { value: 'all', label: '详情记录：全部' },
-  { value: 'on', label: '详情记录：开启' },
-  { value: 'off', label: '详情记录：关闭' },
-]
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('zh-CN').format(Math.max(0, value))
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('zh-CN', {
-    hour12: false,
-  })
-}
-
-function formatDuration(value: number | null): string {
-  if (value === null || value < 0) return '-'
-  if (value < 1000) return `${value} ms`
-  return `${(value / 1000).toFixed(2)} s`
-}
-
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'running':
-      return '运行中'
-    case 'completed':
-      return '已完成'
-    case 'failed':
-      return '失败'
-    case 'cancelled':
-      return '已取消'
-    default:
-      return status
-  }
-}
-
-function statusBadgeClass(status: string): string {
-  if (status === 'completed') {
-    return 'bg-primary/15 text-primary'
-  }
-  if (status === 'failed') {
-    return 'bg-destructive/10 text-destructive'
-  }
-  if (status === 'cancelled') {
-    return 'bg-muted text-muted-foreground'
-  }
-  return 'bg-background text-foreground'
-}
-
-function errorMessageFromUnknown(error: unknown): string {
-  if (typeof error === 'string') {
-    return error
-  }
-  if (error instanceof Error) {
-    return error.message
-  }
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'message' in error &&
-    typeof error.message === 'string'
-  ) {
-    return error.message
-  }
-  return '操作失败，请稍后重试。'
-}
-
-function SummaryItem({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className='rounded-xl bg-background/80 p-3'>
-      <p className='text-xs uppercase tracking-[0.16em] text-muted-foreground'>{label}</p>
-      <p className='mt-2 text-xl font-semibold tracking-tight'>{value}</p>
-      {hint ? <p className='mt-1 text-xs text-muted-foreground'>{hint}</p> : null}
-    </div>
-  )
-}
-
-function PaginationBar({
-  loading,
-  page,
-  total,
-  hasMore,
-  onPrev,
-  onNext,
-}: {
-  loading: boolean
-  page: number
-  total: number
-  hasMore: boolean
-  onPrev: () => void
-  onNext: () => void
-}) {
-  return (
-    <div className='flex items-center justify-end gap-2 pt-3'>
-      <p className='mr-auto text-xs text-muted-foreground'>共 {formatNumber(total)} 条</p>
-      <Button
-        disabled={loading || page <= 1}
-        onClick={onPrev}
-        size='sm'
-        type='button'
-        variant='outline'
-      >
-        上一页
-      </Button>
-      <span className='text-xs text-muted-foreground'>第 {page} 页</span>
-      <Button
-        disabled={loading || !hasMore}
-        onClick={onNext}
-        size='sm'
-        type='button'
-        variant='outline'
-      >
-        下一页
-      </Button>
-    </div>
-  )
 }
 
 export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionProps) {
   const { error: toastError } = useToastContext()
 
   const providers = useMemo(() => flattenProviderProfiles(providerAccounts), [providerAccounts])
+  const modelOptions = useMemo<UsageModelOption[]>(
+    () =>
+      providers.map((provider) => ({
+        id: provider.id,
+        label: `${provider.name} / ${provider.model_name || provider.model}`,
+      })),
+    [providers],
+  )
 
-  const [range, setRange] = useState<UsageStatsRange>('7d')
+  const [range, setRange] = useState<'24h' | '7d' | '30d' | 'all'>('7d')
   const [activeTab, setActiveTab] = useState<UsageTab>('logs')
 
   const [summary, setSummary] = useState<UsageSummaryPayload | null>(null)
@@ -190,7 +62,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
   const [logsData, setLogsData] = useState<UsageLogsPayload | null>(null)
   const [logModelId, setLogModelId] = useState('all')
   const [logStatus, setLogStatus] = useState('all')
-  const [detailFilter, setDetailFilter] = useState<DetailFilter>('all')
 
   const [providersPage, setProvidersPage] = useState(1)
   const [providersLoading, setProvidersLoading] = useState(false)
@@ -204,7 +75,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsData, setToolsData] = useState<UsageToolStatsPayload | null>(null)
 
-  const [expandedTurnId, setExpandedTurnId] = useState<string | null>(null)
+  const [selectedLogItem, setSelectedLogItem] = useState<UsageLogItem | null>(null)
   const [detailLoadingTurnId, setDetailLoadingTurnId] = useState<string | null>(null)
   const [detailsByTurnId, setDetailsByTurnId] = useState<Record<string, UsageLogDetailPayload>>({})
 
@@ -213,15 +84,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
   const providersRequestIdRef = useRef(0)
   const modelsRequestIdRef = useRef(0)
   const toolsRequestIdRef = useRef(0)
-
-  const modelOptions = useMemo(
-    () =>
-      providers.map((provider) => ({
-        id: provider.id,
-        label: `${provider.name} / ${provider.model_name || provider.model}`,
-      })),
-    [providers],
-  )
 
   useEffect(() => {
     const requestId = ++summaryRequestIdRef.current
@@ -263,7 +125,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
 
   useEffect(() => {
     setLogsPage(1)
-  }, [logModelId, logStatus, detailFilter])
+  }, [logModelId, logStatus])
 
   useEffect(() => {
     if (activeTab !== 'logs') return
@@ -277,7 +139,6 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
           range,
           provider_profile_id: logModelId === 'all' ? null : logModelId,
           status: logStatus === 'all' ? null : logStatus,
-          detail_logged: detailFilter === 'all' ? null : detailFilter === 'on',
           page: logsPage,
           page_size: DEFAULT_PAGE_SIZE,
         })
@@ -300,7 +161,7 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
     return () => {
       disposed = true
     }
-  }, [activeTab, range, logModelId, logStatus, detailFilter, logsPage, toastError])
+  }, [activeTab, range, logModelId, logStatus, logsPage, toastError])
 
   useEffect(() => {
     if (activeTab !== 'providers') return
@@ -413,85 +274,39 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
     }
   }, [activeTab, range, toolsPage, toastError])
 
-  async function handleToggleTurnDetail(turnId: string) {
-    if (expandedTurnId === turnId) {
-      setExpandedTurnId(null)
+  async function handleOpenLogDetail(item: UsageLogItem) {
+    setSelectedLogItem(item)
+    if (detailsByTurnId[item.turn_id]) {
       return
     }
 
-    setExpandedTurnId(turnId)
-    if (detailsByTurnId[turnId]) {
-      return
-    }
-
-    setDetailLoadingTurnId(turnId)
+    setDetailLoadingTurnId(item.turn_id)
     try {
       const payload = await getAppClient().request<UsageLogDetailPayload>('usage.logs.detail', {
-        turn_id: turnId,
+        turn_id: item.turn_id,
       })
       setDetailsByTurnId((current) => ({
         ...current,
-        [turnId]: payload,
+        [item.turn_id]: payload,
       }))
     } catch (error) {
       toastError(errorMessageFromUnknown(error))
     } finally {
-      setDetailLoadingTurnId(null)
+      setDetailLoadingTurnId((current) => (current === item.turn_id ? null : current))
     }
   }
 
   return (
     <div className='space-y-4'>
-      <Card className='bg-card/80 py-0 shadow-none'>
-        <CardHeader className='space-y-4 py-4'>
-          <div className='flex flex-wrap items-center justify-between gap-3'>
-            <div>
-              <CardTitle>使用概览</CardTitle>
-              <CardDescription>按时间范围查看 Turn 与 Token 消耗。</CardDescription>
-            </div>
-            <div className='flex items-center gap-2 rounded-xl bg-background/80 p-1'>
-              {rangeOptions.map((item) => (
-                <Button
-                  className={cn('h-8 rounded-lg px-3', range === item.value && 'shadow-none')}
-                  key={item.value}
-                  onClick={() => setRange(item.value)}
-                  size='sm'
-                  type='button'
-                  variant={range === item.value ? 'default' : 'ghost'}
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-        </CardHeader>
+      <UsageSummaryCard
+        onRangeChange={setRange}
+        range={range}
+        summary={summary}
+        summaryLoading={summaryLoading}
+      />
 
-        <CardContent className='grid gap-3 py-4 sm:grid-cols-2 xl:grid-cols-4'>
-          <SummaryItem
-            label='总 Turn'
-            value={summaryLoading ? '...' : formatNumber(summary?.total_turns ?? 0)}
-            hint={`总 Step ${formatNumber(summary?.total_steps ?? 0)}`}
-          />
-          <SummaryItem
-            label='输入 Token'
-            value={summaryLoading ? '...' : formatNumber(summary?.input_tokens ?? 0)}
-            hint={`缓存读取 ${formatNumber(summary?.input_cache_read_tokens ?? 0)}`}
-          />
-          <SummaryItem
-            label='输出 Token'
-            value={summaryLoading ? '...' : formatNumber(summary?.output_tokens ?? 0)}
-            hint={`推理 ${formatNumber(summary?.reasoning_tokens ?? 0)}`}
-          />
-          <SummaryItem
-            label='总 Token'
-            value={summaryLoading ? '...' : formatNumber(summary?.total_tokens ?? 0)}
-            hint={`平均步数 ${((summary?.avg_steps_per_turn ?? 0) || 0).toFixed(2)}`}
-          />
-        </CardContent>
-      </Card>
-
-      <Card className='bg-card/80 py-0 shadow-none'>
-        <CardContent className='space-y-4 py-4'>
+      <Card className={SETTINGS_CARD_CLASSNAME}>
+        <CardContent className={`${SETTINGS_CARD_CONTENT_CLASSNAME} py-4`}>
           <Tabs
             onValueChange={(value) => {
               if (
@@ -520,330 +335,67 @@ export function UsageSettingsSection({ providerAccounts }: UsageSettingsSectionP
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent className='pt-3' value='logs'>
-              <div className='mb-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]'>
-                <Select onValueChange={(value) => setLogModelId(value ?? 'all')} value={logModelId}>
-                  <SelectTrigger className='w-full'>
-                    <SelectValue placeholder='选择模型' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>全部模型</SelectItem>
-                    {modelOptions.map((model) => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select onValueChange={(value) => setLogStatus(value ?? 'all')} value={logStatus}>
-                  <SelectTrigger className='w-full'>
-                    <SelectValue placeholder='选择状态' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {statusOptions.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Select
-                  onValueChange={(value) => {
-                    if (value === 'on' || value === 'off' || value === 'all') {
-                      setDetailFilter(value)
-                      return
-                    }
-                    setDetailFilter('all')
-                  }}
-                  value={detailFilter}
-                >
-                  <SelectTrigger className='w-full'>
-                    <SelectValue placeholder='详情记录筛选' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {detailFilterOptions.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className='space-y-2'>
-                {logsLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl px-3 py-5 text-sm text-muted-foreground'>
-                    <Loader2 className='h-4 w-4 animate-spin' /> 加载 Turn 日志中...
-                  </div>
-                ) : logsData?.items.length ? (
-                  logsData.items.map((item) => {
-                    const isExpanded = expandedTurnId === item.turn_id
-                    const detailPayload = detailsByTurnId[item.turn_id]
-                    return (
-                      <div className='rounded-xl bg-background/75 p-3' key={item.turn_id}>
-                        <div className='flex flex-wrap items-center gap-2'>
-                          <Badge className={cn('', statusBadgeClass(item.status))}>
-                            {statusLabel(item.status)}
-                          </Badge>
-                          <Badge className='bg-card text-foreground'>
-                            {item.provider_name ?? '未绑定服务商'}
-                          </Badge>
-                          <Badge className='bg-card text-foreground'>
-                            {item.model_name ?? item.model ?? '未绑定模型'}
-                          </Badge>
-                          <Badge className='bg-card text-foreground'>
-                            详情{item.detail_logged ? '开启' : '关闭'}
-                          </Badge>
-                        </div>
-
-                        <p className='mt-2 line-clamp-2 text-sm text-foreground/90'>
-                          {item.user_message || '(空 Turn)'}
-                        </p>
-
-                        <div className='mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
-                          <span>{formatDateTime(item.started_at)}</span>
-                          <span>耗时: {formatDuration(item.duration_ms)}</span>
-                          <span>steps: {formatNumber(item.step_count)}</span>
-                          <span>
-                            tokens: {formatNumber(item.input_tokens)}/
-                            {formatNumber(item.output_tokens)}/{formatNumber(item.total_tokens)}
-                          </span>
-                          <span>缓存读: {formatNumber(item.input_cache_read_tokens)}</span>
-                        </div>
-
-                        <div className='mt-3'>
-                          <Button
-                            disabled={detailLoadingTurnId === item.turn_id}
-                            onClick={() => void handleToggleTurnDetail(item.turn_id)}
-                            size='sm'
-                            type='button'
-                            variant='outline'
-                          >
-                            {detailLoadingTurnId === item.turn_id ? (
-                              <Loader2 className='mr-1 h-4 w-4 animate-spin' />
-                            ) : (
-                              <Clock3 className='mr-1 h-4 w-4' />
-                            )}
-                            {isExpanded ? '收起详情' : '查看详情'}
-                          </Button>
-                        </div>
-
-                        {isExpanded ? (
-                          <div className='mt-3 space-y-2 rounded-xl bg-muted/35 p-2'>
-                            {detailPayload?.tools.length ? (
-                              detailPayload.tools.map((tool) => (
-                                <div
-                                  className='rounded-lg bg-background/80 px-3 py-2'
-                                  key={tool.id}
-                                >
-                                  <div className='flex flex-wrap items-center gap-2 text-xs'>
-                                    <Badge className='bg-card text-foreground'>
-                                      {tool.tool_name}
-                                    </Badge>
-                                    {tool.tool_action ? (
-                                      <Badge className='bg-card text-foreground'>
-                                        {tool.tool_action}
-                                      </Badge>
-                                    ) : null}
-                                    <Badge
-                                      className={cn(
-                                        '',
-                                        tool.is_error
-                                          ? 'bg-destructive/10 text-destructive'
-                                          : 'bg-primary/15 text-primary',
-                                      )}
-                                    >
-                                      {tool.status}
-                                    </Badge>
-                                    <span className='text-muted-foreground'>
-                                      {formatDuration(tool.duration_ms)}
-                                    </span>
-                                    <span className='text-muted-foreground'>
-                                      {formatDateTime(tool.created_at)}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))
-                            ) : (
-                              <p className='px-1 py-2 text-xs text-muted-foreground'>
-                                当前 Turn 没有可展示的工具详情。
-                              </p>
-                            )}
-                          </div>
-                        ) : null}
-                      </div>
-                    )
-                  })
-                ) : (
-                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
-                    当前筛选下暂无 Turn 日志。
-                  </div>
-                )}
-              </div>
-
-              <PaginationBar
-                hasMore={logsData?.page.has_more ?? false}
+            <TabsContent value='logs'>
+              <UsageLogsTab
+                currentPage={logsPage}
+                detailLoadingTurnId={detailLoadingTurnId}
                 loading={logsLoading}
-                onNext={() => setLogsPage((current) => current + 1)}
-                onPrev={() => setLogsPage((current) => Math.max(1, current - 1))}
-                page={logsData?.page.page ?? logsPage}
-                total={logsData?.page.total ?? 0}
+                logModelId={logModelId}
+                logStatus={logStatus}
+                logsData={logsData}
+                modelOptions={modelOptions}
+                onLogModelIdChange={setLogModelId}
+                onLogStatusChange={setLogStatus}
+                onNextPage={() => setLogsPage((current) => current + 1)}
+                onOpenDetail={(item) => void handleOpenLogDetail(item)}
+                onPrevPage={() => setLogsPage((current) => Math.max(1, current - 1))}
               />
             </TabsContent>
 
-            <TabsContent className='pt-3' value='providers'>
-              <div className='space-y-2'>
-                {providersLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl  px-3 py-5 text-sm text-muted-foreground'>
-                    <Loader2 className='h-4 w-4 animate-spin' /> 加载供应商统计中...
-                  </div>
-                ) : providersData?.items.length ? (
-                  providersData.items.map((item, index) => (
-                    <div
-                      className='grid gap-2 rounded-xl  bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
-                      key={`${item.provider_id ?? 'unknown'}-${index}`}
-                    >
-                      <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
-                      <p className='truncate text-sm font-medium'>
-                        {item.provider_name ?? '未识别服务商'}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        Turn {formatNumber(item.turn_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        成功 {formatNumber(item.completed_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        失败 {formatNumber(item.failed_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        Token {formatNumber(item.total_tokens)}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
-                    当前范围暂无供应商统计。
-                  </div>
-                )}
-              </div>
-
-              <PaginationBar
-                hasMore={providersData?.page.has_more ?? false}
+            <TabsContent value='providers'>
+              <UsageProvidersTab
+                data={providersData}
                 loading={providersLoading}
-                onNext={() => setProvidersPage((current) => current + 1)}
-                onPrev={() => setProvidersPage((current) => Math.max(1, current - 1))}
-                page={providersData?.page.page ?? providersPage}
-                total={providersData?.page.total ?? 0}
+                onNextPage={() => setProvidersPage((current) => current + 1)}
+                onPrevPage={() => setProvidersPage((current) => Math.max(1, current - 1))}
+                page={providersPage}
               />
             </TabsContent>
 
-            <TabsContent className='pt-3' value='models'>
-              <div className='space-y-2'>
-                {modelsLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl  px-3 py-5 text-sm text-muted-foreground'>
-                    <Loader2 className='h-4 w-4 animate-spin' /> 加载模型统计中...
-                  </div>
-                ) : modelsData?.items.length ? (
-                  modelsData.items.map((item, index) => (
-                    <div
-                      className='grid gap-2 rounded-xl  bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
-                      key={`${item.model_id ?? 'unknown'}-${index}`}
-                    >
-                      <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
-                      <div className='min-w-0'>
-                        <p className='truncate text-sm font-medium'>
-                          {item.model_name ?? item.model ?? '未识别模型'}
-                        </p>
-                        <p className='truncate text-xs text-muted-foreground'>
-                          {item.provider_name ?? '未识别服务商'}
-                        </p>
-                      </div>
-                      <p className='text-xs text-muted-foreground'>
-                        Turn {formatNumber(item.turn_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        成功 {formatNumber(item.completed_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        Token {formatNumber(item.total_tokens)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        均耗时 {formatDuration(item.avg_duration_ms)}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
-                    当前范围暂无模型统计。
-                  </div>
-                )}
-              </div>
-
-              <PaginationBar
-                hasMore={modelsData?.page.has_more ?? false}
+            <TabsContent value='models'>
+              <UsageModelsTab
+                data={modelsData}
                 loading={modelsLoading}
-                onNext={() => setModelsPage((current) => current + 1)}
-                onPrev={() => setModelsPage((current) => Math.max(1, current - 1))}
-                page={modelsData?.page.page ?? modelsPage}
-                total={modelsData?.page.total ?? 0}
+                onNextPage={() => setModelsPage((current) => current + 1)}
+                onPrevPage={() => setModelsPage((current) => Math.max(1, current - 1))}
+                page={modelsPage}
               />
             </TabsContent>
 
-            <TabsContent className='pt-3' value='tools'>
-              <div className='space-y-2'>
-                {toolsLoading ? (
-                  <div className='flex items-center gap-2 rounded-xl  px-3 py-5 text-sm text-muted-foreground'>
-                    <Loader2 className='h-4 w-4 animate-spin' /> 加载工具统计中...
-                  </div>
-                ) : toolsData?.items.length ? (
-                  toolsData.items.map((item, index) => (
-                    <div
-                      className='grid gap-2 rounded-xl  bg-background/75 p-3 md:grid-cols-[32px_minmax(0,1fr)_repeat(4,minmax(0,1fr))] md:items-center'
-                      key={`${item.tool_name}-${item.tool_action ?? 'all'}-${index}`}
-                    >
-                      <p className='text-sm font-semibold text-muted-foreground'>#{index + 1}</p>
-                      <div className='min-w-0'>
-                        <p className='truncate text-sm font-medium'>{item.tool_name}</p>
-                        <p className='truncate text-xs text-muted-foreground'>
-                          {item.tool_action ?? '(无动作标识)'}
-                        </p>
-                      </div>
-                      <p className='text-xs text-muted-foreground'>
-                        调用 {formatNumber(item.call_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        成功 {formatNumber(item.success_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        错误 {formatNumber(item.error_count)}
-                      </p>
-                      <p className='text-xs text-muted-foreground'>
-                        均耗时 {formatDuration(item.avg_duration_ms)}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <div className='rounded-xl px-3 py-5 text-sm text-muted-foreground'>
-                    当前范围暂无工具统计。
-                  </div>
-                )}
-              </div>
-
-              <PaginationBar
-                hasMore={toolsData?.page.has_more ?? false}
+            <TabsContent value='tools'>
+              <UsageToolsTab
+                data={toolsData}
                 loading={toolsLoading}
-                onNext={() => setToolsPage((current) => current + 1)}
-                onPrev={() => setToolsPage((current) => Math.max(1, current - 1))}
-                page={toolsData?.page.page ?? toolsPage}
-                total={toolsData?.page.total ?? 0}
+                onNextPage={() => setToolsPage((current) => current + 1)}
+                onPrevPage={() => setToolsPage((current) => Math.max(1, current - 1))}
+                page={toolsPage}
               />
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
+
+      <UsageLogDetailDialog
+        detail={selectedLogItem ? detailsByTurnId[selectedLogItem.turn_id] ?? null : null}
+        item={selectedLogItem}
+        loading={selectedLogItem ? detailLoadingTurnId === selectedLogItem.turn_id : false}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedLogItem(null)
+          }
+        }}
+        open={selectedLogItem !== null}
+      />
     </div>
   )
 }
