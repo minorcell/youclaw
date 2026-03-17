@@ -13,10 +13,11 @@ use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::new_tool_approval;
 
 use super::filesystem_context::validate_path;
-use super::tool_runtime::{await_approval, ToolRuntimeContext};
+use super::tool_runtime::{
+    ToolApprovalMode, ToolApprovalOutcome, ToolApprovalRequest, ToolRuntimeContext,
+};
 
 pub const BASH_EXEC_TOOL_NAME: &str = "bash_exec";
 
@@ -73,7 +74,7 @@ pub fn build_bash_exec_tool(context: BashToolContext) -> Tool {
     let workspace_root = context.workspace_root.to_string_lossy().to_string();
     tool(BASH_EXEC_TOOL_NAME)
         .description(format!(
-            "Run a short non-interactive bash command inside the workspace. Requires approval, enforces timeout/output limits, and returns stdout/stderr/exit code. Paths in `cwd` must stay within workspace root `{workspace_root}`."
+            "Run a short non-interactive bash command inside the workspace. In default mode it requires approval; in full_access mode it runs directly. Timeout/output limits still apply. Paths in `cwd` must stay within workspace root `{workspace_root}`."
         ))
         .raw_schema(json!({
             "type": "object",
@@ -129,25 +130,28 @@ async fn execute_bash_exec(
     let timeout_ms = timeout_ms
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(1000, MAX_TIMEOUT_MS);
-    let risk_flags = detect_risk_flags(command);
-    let approval = new_tool_approval(
-        context.session_id.clone(),
-        context.turn_id.clone(),
-        tool_call.call_id.clone(),
-        "bash_exec",
-        summarize_command(command),
-        json!({
-            "kind": "command",
-            "command": command,
-            "cwd": resolved_cwd.to_string_lossy(),
-            "timeout_ms": timeout_ms,
-            "risk_flags": risk_flags,
-            "description": "Shell execution always requires approval."
-        }),
-    );
-    let decision = await_approval(&context.runtime, &tool_call, &approval).await?;
 
-    if !decision {
+    let approval = context
+        .runtime
+        .authorize_tool_call(
+            &tool_call,
+            ToolApprovalRequest {
+                mode: ToolApprovalMode::Default,
+                action: "bash_exec".to_string(),
+                subject: summarize_command(command),
+                preview_json: json!({
+                    "kind": "command",
+                    "command": command,
+                    "cwd": resolved_cwd.to_string_lossy(),
+                    "timeout_ms": timeout_ms,
+                    "risk_flags": detect_risk_flags(command),
+                    "description": "Shell execution requires approval in default mode."
+                }),
+            },
+        )
+        .await?;
+
+    if approval == ToolApprovalOutcome::Rejected {
         context.storage.record_shell_execution(
             &context.session_id,
             &context.turn_id,
@@ -192,7 +196,7 @@ async fn execute_bash_exec(
         return Err(AppError::Cancelled("shell command cancelled".to_string()));
     }
 
-    Ok(json!({
+    let mut result = json!({
         "action": "exec",
         "command": command,
         "cwd": resolved_cwd.to_string_lossy(),
@@ -204,7 +208,13 @@ async fn execute_bash_exec(
         "stderr": execution.stderr.text,
         "stdout_truncated": execution.stdout.truncated,
         "stderr_truncated": execution.stderr.truncated,
-    }))
+    });
+
+    if approval.approval_bypassed() {
+        result["approval_bypassed"] = Value::Bool(true);
+    }
+
+    Ok(result)
 }
 
 async fn run_shell_command(
@@ -482,7 +492,59 @@ fn exit_status_signal(_: &std::process::ExitStatus) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_risk_flags, has_standalone_ampersand};
+    use super::{detect_risk_flags, execute_bash_exec, has_standalone_ampersand, BashToolContext};
+    use crate::backend::agents::tools::ToolRuntimeContext;
+    use crate::backend::models::domain::{new_chat_session, SessionApprovalMode};
+    use crate::backend::{ApprovalService, StorageService, WsHub};
+    use aquaregia::ToolCall;
+    use serde_json::json;
+    use std::sync::atomic::AtomicU8;
+    use std::sync::{Arc, Mutex};
+    use tempfile::{tempdir, TempDir};
+    use tokio_util::sync::CancellationToken;
+
+    fn build_test_context(
+        approval_mode: SessionApprovalMode,
+    ) -> (BashToolContext, StorageService, TempDir) {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+        let workspace_root = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).expect("workspace");
+
+        let mut session = new_chat_session(None);
+        session.id = "session-1".to_string();
+        session.approval_mode = approval_mode;
+        storage.insert_session(&session).expect("insert session");
+
+        let context = BashToolContext {
+            runtime: ToolRuntimeContext {
+                session_id: session.id,
+                turn_id: "turn-1".to_string(),
+                current_step: Arc::new(AtomicU8::new(1)),
+                tool_calls: Arc::new(Mutex::new(std::collections::HashMap::new())),
+                cancellation_token: CancellationToken::new(),
+                approvals: ApprovalService::new(storage.clone()),
+                approval_mode,
+                storage: storage.clone(),
+                hub: WsHub::new(),
+            },
+            workspace_root,
+        };
+
+        (context, storage, dir)
+    }
+
+    fn register_tool_call(context: &BashToolContext, command: &str) -> String {
+        let call_id = "test-bash-call".to_string();
+        let call = ToolCall {
+            call_id: call_id.clone(),
+            tool_name: super::BASH_EXEC_TOOL_NAME.to_string(),
+            args_json: json!({ "command": command }),
+        };
+        let mut registry = context.tool_calls.lock().expect("tool call lock");
+        registry.insert(call_id.clone(), call);
+        call_id
+    }
 
     #[test]
     fn detects_background_operators() {
@@ -495,5 +557,33 @@ mod tests {
         let flags = detect_risk_flags("rm -rf dist && curl https://example.com");
         assert!(flags.iter().any(|flag| flag == "destructive_delete"));
         assert!(flags.iter().any(|flag| flag == "network_access"));
+    }
+
+    #[tokio::test]
+    async fn full_access_bash_exec_skips_approval() {
+        let (context, storage, _dir) = build_test_context(SessionApprovalMode::FullAccess);
+        let call_id = register_tool_call(&context, "printf hello");
+
+        let result = execute_bash_exec(
+            &context,
+            "printf hello",
+            None,
+            Some(super::DEFAULT_TIMEOUT_MS),
+            Some(&call_id),
+        )
+        .await
+        .expect("execute bash");
+
+        assert_eq!(
+            result.get("stdout").and_then(|value| value.as_str()),
+            Some("hello")
+        );
+        assert_eq!(
+            result
+                .get("approval_bypassed")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(storage.list_approvals().expect("list approvals").is_empty());
     }
 }

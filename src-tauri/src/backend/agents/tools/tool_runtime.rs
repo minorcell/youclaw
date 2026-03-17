@@ -4,12 +4,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aquaregia::ToolCall;
+use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::domain::{SessionApprovalMode, ToolApproval};
+use crate::backend::models::domain::{new_tool_approval, SessionApprovalMode, ToolApproval};
 use crate::backend::models::events::ToolRequestedPayload;
 use crate::backend::{ApprovalService, StorageService, WsHub};
 
@@ -32,9 +33,66 @@ pub struct ToolRuntimeContext {
     pub hub: WsHub,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolApprovalMode {
+    Never,
+    Default,
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolApprovalRequest {
+    pub mode: ToolApprovalMode,
+    pub action: String,
+    pub subject: String,
+    pub preview_json: Value,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolApprovalOutcome {
+    Bypassed,
+    Approved,
+    Rejected,
+}
+
+impl ToolApprovalOutcome {
+    pub fn approval_bypassed(self) -> bool {
+        matches!(self, Self::Bypassed)
+    }
+}
+
 impl ToolRuntimeContext {
-    pub fn should_skip_mutation_approval(&self) -> bool {
-        matches!(self.approval_mode, SessionApprovalMode::FullAccess)
+    fn should_require_approval(&self, mode: ToolApprovalMode) -> bool {
+        match mode {
+            ToolApprovalMode::Never => false,
+            ToolApprovalMode::Default => {
+                !matches!(self.approval_mode, SessionApprovalMode::FullAccess)
+            }
+        }
+    }
+
+    pub(crate) async fn authorize_tool_call(
+        &self,
+        tool_call: &ToolCall,
+        request: ToolApprovalRequest,
+    ) -> AppResult<ToolApprovalOutcome> {
+        if !self.should_require_approval(request.mode) {
+            return Ok(ToolApprovalOutcome::Bypassed);
+        }
+
+        let approval = new_tool_approval(
+            self.session_id.clone(),
+            self.turn_id.clone(),
+            tool_call.call_id.clone(),
+            request.action,
+            request.subject,
+            request.preview_json,
+        );
+
+        if await_approval(self, tool_call, &approval).await? {
+            Ok(ToolApprovalOutcome::Approved)
+        } else {
+            Ok(ToolApprovalOutcome::Rejected)
+        }
     }
 
     pub(crate) fn claim_tool_call(

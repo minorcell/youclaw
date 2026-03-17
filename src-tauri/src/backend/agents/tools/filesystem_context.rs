@@ -1292,6 +1292,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_file_full_access_skips_approval() {
+        let dir = tempdir().expect("tempdir");
+        let (mut context, storage, workspace_root) = build_test_context(&dir);
+        context.runtime.approval_mode = SessionApprovalMode::FullAccess;
+        let target = workspace_root.join("full-access-notes.txt");
+        std::fs::write(&target, "before").expect("seed");
+        let tool_call_id = register_tool_call(
+            &context,
+            "write_file",
+            json!({
+                "path": "full-access-notes.txt",
+            }),
+        );
+
+        let payload = context
+            .write_file(
+                "write_file",
+                "full-access-notes.txt",
+                "after",
+                Some(tool_call_id.as_str()),
+            )
+            .await
+            .expect("write in full access");
+
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read target"),
+            "after"
+        );
+        assert_eq!(
+            payload
+                .get("approval_bypassed")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(storage.list_approvals().expect("list approvals").is_empty());
+    }
+
+    #[tokio::test]
     async fn edit_file_dry_run_does_not_write() {
         let dir = tempdir().expect("tempdir");
         let (context, _storage, workspace_root) = build_test_context(&dir);
@@ -1378,6 +1416,47 @@ mod tests {
         let result = handle.await.expect("join");
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&target).expect("read"), "before\n");
+    }
+
+    #[tokio::test]
+    async fn edit_file_full_access_skips_approval() {
+        let dir = tempdir().expect("tempdir");
+        let (mut context, storage, workspace_root) = build_test_context(&dir);
+        context.runtime.approval_mode = SessionApprovalMode::FullAccess;
+        let target = workspace_root.join("edit-full-access.txt");
+        std::fs::write(&target, "before\n").expect("seed");
+        let tool_call_id = register_tool_call(
+            &context,
+            "edit_file",
+            json!({
+                "path": "edit-full-access.txt",
+                "edit_count": 1,
+                "dry_run": false,
+            }),
+        );
+
+        let payload = context
+            .edit_file(
+                "edit_file",
+                "edit-full-access.txt",
+                &[FileEdit {
+                    old_text: "before".to_string(),
+                    new_text: "after".to_string(),
+                }],
+                false,
+                Some(tool_call_id.as_str()),
+            )
+            .await
+            .expect("edit in full access");
+
+        assert_eq!(std::fs::read_to_string(&target).expect("read"), "after\n");
+        assert_eq!(
+            payload
+                .get("approval_bypassed")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(storage.list_approvals().expect("list approvals").is_empty());
     }
 
     #[tokio::test]
