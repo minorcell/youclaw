@@ -104,7 +104,7 @@ export function AppSidebar({
           <p className='text-sm font-semibold tracking-[0.12em] text-foreground/75'>youclaw</p>
         </div>
 
-        <div className='mt-1 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-4'>
+        <div className='no-scrollbar mt-1 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-4'>
           {activeView === 'settings' ? (
             <Card className='bg-card/60 py-0'>
               <div className='flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground'>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
@@ -32,6 +32,7 @@ export function ProvidersSettingsPage() {
   const { success: toastSuccess, error: toastError } = useToastContext()
   const [accountBusy, setAccountBusy] = useState(false)
   const [modelBusyId, setModelBusyId] = useState<string | null>(null)
+  const hasInitializedSelection = useRef(false)
 
   useEffect(() => {
     if (providerAccounts.length === 0) {
@@ -42,6 +43,14 @@ export function ProvidersSettingsPage() {
     const hasSelectedProvider = providerAccounts.some(
       (provider) => provider.id === selectedProviderId,
     )
+    if (!hasInitializedSelection.current) {
+      hasInitializedSelection.current = true
+      if (selectedProviderId === 'new' || !hasSelectedProvider) {
+        setSelectedProviderId(providerAccounts[0].id)
+      }
+      return
+    }
+
     if (selectedProviderId !== 'new' && !hasSelectedProvider) {
       setSelectedProviderId(providerAccounts[0].id)
     }
