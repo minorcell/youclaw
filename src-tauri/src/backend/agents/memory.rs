@@ -6,8 +6,9 @@ use std::time::UNIX_EPOCH;
 use sha2::{Digest, Sha256};
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::{
-    now_timestamp, MemoryGetPayload, MemoryReindexPayload, MemorySearchPayload,
+use crate::backend::models::domain::now_timestamp;
+use crate::backend::models::responses::{
+    MemoryGetPayload, MemoryReindexPayload, MemorySearchPayload,
 };
 use crate::backend::storage::{MemoryChunkInput, MemorySourceFileInput, StorageService};
 

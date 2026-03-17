@@ -18,8 +18,6 @@ const SIDEBAR_DEFAULT_WIDTH = SIDEBAR_MIN_WIDTH
 const CONTENT_MIN_WIDTH = 560
 const SIDEBAR_RESIZE_STEP = 24
 const SIDEBAR_HANDLE_HITBOX = 16
-const MAC_OVERLAY_TITLEBAR_HEIGHT = 36
-
 function clampValue(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -280,7 +278,7 @@ export function AppLayout() {
     setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth + delta))
   }
 
-  function handleOverlayTitlebarPointerDown(event: PointerEvent<HTMLDivElement>) {
+  function handleWindowDragPointerDown(event: PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {
       return
     }
@@ -298,20 +296,12 @@ export function AppLayout() {
           gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)`,
         }}
       >
-        {useMacOverlayTitlebar ? (
-          <div
-            className='absolute inset-x-0 top-0 z-30'
-            data-tauri-drag-region
-            onPointerDown={handleOverlayTitlebarPointerDown}
-            style={{ height: `${MAC_OVERLAY_TITLEBAR_HEIGHT}px` }}
-          />
-        ) : null}
-
-        <div className={cn('min-h-0 overflow-hidden', useMacOverlayTitlebar && 'pt-9')}>
+        <div className='min-h-0 overflow-hidden'>
           <AppSidebar
             activeSessionId={selectedSidebarSessionId}
             activeSettingsSection={activeSettingsSection}
             activeView={isSettingsPage ? 'settings' : 'chat'}
+            enableWindowDrag={useMacOverlayTitlebar}
             onCreateSession={() => void handleCreateSession()}
             onDeleteSession={handleDeleteSession}
             onOpenChat={handleOpenChat}
@@ -320,6 +310,7 @@ export function AppLayout() {
                 pathname: `/settings/${DEFAULT_SETTINGS_SECTION}`,
               })
             }
+            onWindowDragPointerDown={handleWindowDragPointerDown}
             onRenameSession={handleRenameSession}
             onSelectSession={handleSelectSession}
             onSelectSettingsSection={(section) =>

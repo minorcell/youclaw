@@ -1,11 +1,8 @@
-pub mod agent;
-pub mod agent_workspace;
 pub mod agents;
 pub mod errors;
-pub mod memory_manager;
 pub mod models;
-mod provider;
-mod services;
+pub mod providers;
+pub(crate) mod services;
 pub mod storage;
 pub mod ws;
 
@@ -17,9 +14,12 @@ use serde::Serialize;
 use tokio::sync::{broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use agent_workspace::AgentWorkspace;
+use agents::workspace::AgentWorkspace;
 pub use errors::{AppError, AppResult};
 use models::*;
+use services::{
+    AgentRuntimeService, MemoryService, ProviderService, SessionService, WorkspaceService,
+};
 pub use storage::StorageService;
 
 #[derive(Clone)]
@@ -127,38 +127,32 @@ impl BackendState {
             approvals,
             active_turns: Arc::new(Mutex::new(HashMap::new())),
         };
-        let _ = state.reindex_memory();
+        let _ = state.memory_service().reindex();
         Ok(state)
     }
 
-    pub fn bootstrap(&self) -> AppResult<BootstrapPayload> {
-        let mut payload = self.storage.load_bootstrap()?;
-        payload.agent_config = self.storage.get_agent_config()?;
-        payload.workspace_files = self.workspace.list_files()?;
-        Ok(payload)
+    pub(crate) fn runtime_service(&self) -> AgentRuntimeService {
+        AgentRuntimeService::new(self.storage.clone(), self.workspace.clone())
     }
 
-    pub fn get_agent_config(&self) -> AppResult<AgentConfigPayload> {
-        self.storage.get_agent_config()
+    pub(crate) fn provider_service(&self) -> ProviderService {
+        ProviderService::new(self.storage.clone(), self.ws_hub.clone())
     }
 
-    pub fn update_agent_config(
-        &self,
-        req: AgentConfigUpdateRequest,
-    ) -> AppResult<AgentConfigPayload> {
-        let updated = self.storage.update_agent_config(req)?;
-        self.workspace.install_templates(&updated.language, true)?;
-        Ok(updated)
+    pub(crate) fn session_service(&self) -> SessionService {
+        SessionService::new(
+            self.storage.clone(),
+            self.ws_hub.clone(),
+            self.provider_service(),
+        )
     }
 
-    pub fn publish_providers_changed(&self) -> AppResult<()> {
-        self.ws_hub
-            .emit("providers.changed", self.list_provider_snapshot()?)
+    pub(crate) fn memory_service(&self) -> MemoryService {
+        MemoryService::new(self.storage.clone(), self.workspace.root().to_path_buf())
     }
 
-    pub fn publish_sessions_changed(&self) -> AppResult<()> {
-        self.ws_hub
-            .emit("sessions.changed", self.storage.sessions_payload()?)
+    pub(crate) fn workspace_service(&self) -> WorkspaceService {
+        WorkspaceService::new(self.workspace.clone(), self.memory_service())
     }
 
     pub fn register_turn(&self, turn_id: String) {

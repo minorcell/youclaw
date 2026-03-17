@@ -2,6 +2,7 @@ mod memory;
 mod providers;
 mod schema;
 mod sessions;
+mod shell;
 mod usage;
 
 use std::fs;
@@ -14,16 +15,24 @@ use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection, O
 use serde_json::Value;
 
 use crate::backend::errors::{AppError, AppResult};
+use crate::backend::models::domain::{
+    flatten_provider_profiles, message_from_record, now_timestamp, AgentConfigPayload, ChatMessage,
+    ChatSession, ChatTurn, MessageRole, ProviderAccount, ProviderProfile, StoredProviders,
+    ToolApproval, TurnStatus,
+};
+use crate::backend::models::requests::{
+    AgentConfigUpdateRequest, UsageLogDetailRequest, UsageLogsListRequest, UsageStatsListRequest,
+    UsageSummaryRequest,
+};
+use crate::backend::models::responses::{
+    ArchivedSessionsPayload, BootstrapPayload, MemoryReindexPayload, MemorySearchHit,
+    SessionsChangedPayload,
+};
 use crate::backend::models::{
-    flatten_provider_profiles, message_from_record, now_timestamp, AgentConfigPayload,
-    AgentConfigUpdateRequest, ArchivedSessionsPayload, BootstrapPayload, ChatMessage, ChatSession,
-    ChatTurn, MemoryReindexPayload, MemorySearchHit, MessageRole, ProviderAccount, ProviderProfile,
-    SessionsChangedPayload, StoredProviders, ToolApproval, TurnStatus, UsageLogDetailPayload,
-    UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest, UsageLogsPayload,
-    UsageModelStatsItem, UsageModelStatsPayload, UsagePage, UsageProviderStatsItem,
-    UsageProviderStatsPayload, UsageStatsListRequest, UsageSummaryPayload, UsageSummaryRequest,
-    UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D,
-    USAGE_RANGE_7D, USAGE_RANGE_ALL,
+    UsageLogDetailPayload, UsageLogItem, UsageLogsPayload, UsageModelStatsItem,
+    UsageModelStatsPayload, UsagePage, UsageProviderStatsItem, UsageProviderStatsPayload,
+    UsageSummaryPayload, UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload,
+    USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };
 
 #[derive(Clone)]
@@ -180,10 +189,11 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{memory::build_fts_query, normalize_language, StorageService};
-    use crate::backend::models::{
+    use crate::backend::models::domain::{
         new_chat_session, new_chat_turn, new_provider_account, new_provider_model,
-        new_user_chat_message, CreateProviderModelRequest, CreateProviderRequest,
+        new_user_chat_message,
     };
+    use crate::backend::models::requests::{CreateProviderModelRequest, CreateProviderRequest};
 
     #[test]
     fn persists_provider_profiles() {

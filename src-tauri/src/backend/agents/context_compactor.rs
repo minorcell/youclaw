@@ -14,7 +14,7 @@ use crate::backend::agents::summarizer::{
 };
 use crate::backend::agents::token_estimator::estimate_tokens_for_messages;
 use crate::backend::errors::AppResult;
-use crate::backend::models::AgentMemoryCompactedPayload;
+use crate::backend::models::events::AgentMemoryCompactedPayload;
 use crate::backend::BackendState;
 
 /// Compact persisted chat records into the session summary when thresholds are exceeded.

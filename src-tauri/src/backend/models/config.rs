@@ -18,15 +18,3 @@ impl Default for AgentConfigPayload {
         }
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfigUpdateRequest {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_steps: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_input_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compact_ratio: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-}

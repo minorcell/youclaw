@@ -584,7 +584,10 @@ struct ToolCallDetailFallback {
     args_json: serde_json::Value,
 }
 
-fn list_turn_tool_calls(conn: &Connection, turn_id: &str) -> AppResult<Vec<ToolCallDetailFallback>> {
+fn list_turn_tool_calls(
+    conn: &Connection,
+    turn_id: &str,
+) -> AppResult<Vec<ToolCallDetailFallback>> {
     let mut stmt = conn.prepare(
         "SELECT tool_calls_json
          FROM chat_steps
@@ -607,7 +610,7 @@ fn list_turn_tool_calls(conn: &Connection, turn_id: &str) -> AppResult<Vec<ToolC
                     .and_then(|value| value.as_str())
                     .map(ToOwned::to_owned)
                     .or_else(|| {
-                        crate::backend::agents::tools::filesystem_tool_action(&call.tool_name)
+                        crate::backend::agents::tools::tool_action(&call.tool_name)
                             .map(ToOwned::to_owned)
                     }),
                 args_json: call.args_json,
@@ -661,7 +664,12 @@ fn hydrate_usage_tool_log_items(
             continue;
         };
 
-        if item.call_id.is_none() || item.call_id.as_deref().is_some_and(|value| value.is_empty()) {
+        if item.call_id.is_none()
+            || item
+                .call_id
+                .as_deref()
+                .is_some_and(|value| value.is_empty())
+        {
             item.call_id = Some(fallback.call_id);
         }
         if item.tool_action.is_none() {

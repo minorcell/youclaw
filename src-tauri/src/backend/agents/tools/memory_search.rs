@@ -6,7 +6,8 @@ use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::backend::BackendState;
+use crate::backend::models::requests::MemorySearchRequest;
+use crate::backend::services::MemoryService;
 
 #[derive(Debug, Deserialize)]
 struct MemorySearchToolArgs {
@@ -23,7 +24,7 @@ struct MemorySearchToolArgs {
 /// 构建 `memory_search` 工具。
 ///
 /// 用于在 MEMORY.md / memory/*.md 的索引中检索。
-pub fn build_memory_search_tool(state: BackendState) -> Tool {
+pub fn build_memory_search_tool(memory: MemoryService) -> Tool {
     tool("memory_search")
         .description("先搜后读：搜索 MEMORY.md/memory/*.md。参数：query，可选 max_results / min_score。")
         .raw_schema(json!({
@@ -37,12 +38,12 @@ pub fn build_memory_search_tool(state: BackendState) -> Tool {
             "required": ["query"]
         }))
         .execute_raw(move |value| {
-            let state = state.clone();
+            let memory = memory.clone();
             async move {
                 let args = serde_json::from_value::<MemorySearchToolArgs>(value)
                     .map_err(|err| ToolExecError::Execution(format!("invalid args: {err}")))?;
-                let payload = state
-                    .memory_search(crate::backend::models::MemorySearchRequest {
+                let payload = memory
+                    .search(MemorySearchRequest {
                         query: args.query,
                         max_results: args.max_results,
                         min_score: args.min_score,

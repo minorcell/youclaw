@@ -16,84 +16,38 @@ use crate::backend::agents::stream_collector::collect_step_stream;
 use crate::backend::agents::token_estimator::estimate_tokens_for_messages;
 use crate::backend::agents::tool_dispatcher::handle_tool_calls;
 use crate::backend::agents::tools::{
-    build_filesystem_tools, build_memory_get_tool, build_memory_search_tool, FilesystemToolContext,
+    build_bash_exec_tool, build_filesystem_tools, build_memory_get_tool, build_memory_search_tool,
+    BashToolContext, FilesystemToolContext, ToolRuntimeContext,
 };
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::{
-    record_from_message, title_from_first_prompt, ChatMessage, ChatTurn, StepFinishedPayload,
-    StepStartedPayload, TurnCancelledPayload, TurnFailedPayload, TurnFinishedPayload,
-    TurnStartedPayload, TurnStatus,
+use crate::backend::models::domain::{
+    record_from_message, title_from_first_prompt, ChatMessage, ChatTurn, TurnStatus,
 };
-use crate::backend::provider::{normalize_openai_compatible_endpoint, resolve_provider_api_key};
+use crate::backend::models::events::{
+    StepFinishedPayload, StepStartedPayload, TurnFinishedPayload,
+};
+use crate::backend::providers::{normalize_openai_compatible_endpoint, resolve_provider_api_key};
 use crate::backend::BackendState;
 
-#[cfg(test)]
-use crate::backend::agents::context_constants::{STEP_SUMMARY_MARKER, SUMMARY_MARKER};
-#[cfg(test)]
-use crate::backend::agents::summarizer::extract_message_text;
-
-const MAX_OUTPUT_TOKENS: u32 = 1400;
-const MIN_MAX_STEPS: u8 = 8;
-const MAX_MAX_STEPS: u8 = 128;
+pub(crate) const MAX_OUTPUT_TOKENS: u32 = 1400;
+pub(crate) const MIN_MAX_STEPS: u8 = 8;
+pub(crate) const MAX_MAX_STEPS: u8 = 128;
 const MIN_CONTEXT_WINDOW_TOKENS: u32 = 75_000;
 const MAX_CONTEXT_WINDOW_TOKENS: u32 = 200_000;
 
-pub fn spawn_turn(state: BackendState, turn: ChatTurn) {
-    tokio::spawn(async move {
-        let turn_id = turn.id.clone();
-        let session_id = turn.session_id.clone();
-        let result = execute_turn(state.clone(), turn).await;
-        if let Err(err) = result {
-            if let Ok(updated_turn) =
-                state
-                    .storage
-                    .update_turn(&turn_id, err_status(&err), None, Some(&err.message()))
-            {
-                let _ = state
-                    .storage
-                    .update_turn_usage_metric(&updated_turn, None, None);
-            }
-            let payload = if matches!(err, AppError::Cancelled(_)) {
-                serde_json::to_value(TurnCancelledPayload {
-                    session_id,
-                    turn_id: turn_id.clone(),
-                })
-                .unwrap_or_default()
-            } else {
-                serde_json::to_value(TurnFailedPayload {
-                    session_id,
-                    turn_id: turn_id.clone(),
-                    error: err.message(),
-                })
-                .unwrap_or_default()
-            };
-            let _ = state.ws_hub.emit_turn_event(
-                &turn_id,
-                if matches!(err, AppError::Cancelled(_)) {
-                    "chat.turn.cancelled"
-                } else {
-                    "chat.turn.failed"
-                },
-                payload,
-            );
-        }
-        state.unregister_turn(&turn_id);
-    });
-}
-
-async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
-    // Phase 1: load session/provider/runtime settings and build provider client.
+pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
+    let provider_service = state.provider_service();
+    let runtime_service = state.runtime_service();
     let session = state.storage.get_session(&turn.session_id)?;
     let provider_id = session
         .provider_profile_id
         .clone()
         .ok_or_else(|| AppError::Validation("session has no bound provider profile".to_string()))?;
-    let provider = state
-        .get_provider_profile(&provider_id)?
+    let provider = provider_service
+        .get_profile(&provider_id)?
         .ok_or_else(|| AppError::NotFound(format!("provider profile `{provider_id}`")))?;
-    let config = state.storage.get_agent_config()?;
+    let config = runtime_service.get_agent_config()?;
     let max_steps = clamp_max_steps(config.max_steps);
-    // Priority: system default (AgentConfig default) < user global setting < model override.
     let context_window_tokens =
         resolve_context_window_tokens(config.max_input_tokens, provider.context_window_tokens);
     let compact_threshold = ((context_window_tokens as f32) * config.compact_ratio)
@@ -111,7 +65,6 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         builder.build()?
     };
 
-    // Phase 2: assemble prompt context (with optional pre-turn compaction/bootstrap guidance).
     let _ = maybe_compact_session_context(
         &state,
         &turn.session_id,
@@ -131,17 +84,15 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         inject_bootstrap_guidance(&mut messages, guidance);
     }
 
-    // Phase 3: initialize tool runtime context.
     let current_step = Arc::new(AtomicU8::new(0));
     let tool_calls = Arc::new(Mutex::new(HashMap::<String, ToolCall>::new()));
     let token = state
         .get_turn_token(&turn.id)
         .ok_or_else(|| AppError::Cancelled("turn token missing".to_string()))?;
 
-    let filesystem_context = FilesystemToolContext {
+    let tool_runtime = ToolRuntimeContext {
         session_id: turn.session_id.clone(),
         turn_id: turn.id.clone(),
-        workspace_root: state.workspace.root().to_path_buf(),
         current_step: Arc::clone(&current_step),
         tool_calls: Arc::clone(&tool_calls),
         cancellation_token: token.clone(),
@@ -150,11 +101,18 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
         storage: state.storage.clone(),
         hub: state.ws_hub.clone(),
     };
-    let memory_search_tool = build_memory_search_tool(state.clone());
-    let memory_get_tool = build_memory_get_tool(state.clone());
+    let filesystem_context = FilesystemToolContext {
+        runtime: tool_runtime.clone(),
+        workspace_root: state.workspace.root().to_path_buf(),
+    };
     let mut tools = build_filesystem_tools(filesystem_context);
-    tools.push(memory_search_tool);
-    tools.push(memory_get_tool);
+    tools.push(build_bash_exec_tool(BashToolContext {
+        runtime: tool_runtime,
+        workspace_root: state.workspace.root().to_path_buf(),
+    }));
+    tools.push(build_memory_search_tool(state.memory_service()));
+    tools.push(build_memory_get_tool(state.memory_service()));
+
     let tool_map = tools
         .iter()
         .cloned()
@@ -171,7 +129,6 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
     let mut completed_step_count = 0u32;
     let mut finished = false;
 
-    // Phase 4: execute iterative step loop until final assistant output.
     for step in 1..=max_steps {
         current_step.store(step, Ordering::Relaxed);
 
@@ -307,6 +264,23 @@ async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResult<()> {
     )
 }
 
+pub(crate) fn clamp_max_steps(value: u8) -> u8 {
+    value.clamp(MIN_MAX_STEPS, MAX_MAX_STEPS)
+}
+
+pub(crate) fn resolve_context_window_tokens(user_default: u32, model_override: Option<u32>) -> u32 {
+    model_override
+        .unwrap_or(user_default)
+        .clamp(MIN_CONTEXT_WINDOW_TOKENS, MAX_CONTEXT_WINDOW_TOKENS)
+}
+
+pub(super) fn err_status(err: &AppError) -> TurnStatus {
+    match err {
+        AppError::Cancelled(_) => TurnStatus::Cancelled,
+        _ => TurnStatus::Failed,
+    }
+}
+
 fn finalize_turn(
     state: &BackendState,
     turn: &ChatTurn,
@@ -333,7 +307,7 @@ fn finalize_turn(
     state
         .storage
         .touch_session_for_turn(&turn.session_id, title.as_deref())?;
-    state.publish_sessions_changed()?;
+    state.session_service().publish_changed()?;
     state.ws_hub.emit_turn_event(
         &turn.id,
         "chat.turn.finished",
@@ -360,125 +334,4 @@ fn emit_step_finished(state: &BackendState, turn: &ChatTurn, step: &AgentStep) -
             step: step.clone(),
         },
     )
-}
-
-fn clamp_max_steps(value: u8) -> u8 {
-    value.clamp(MIN_MAX_STEPS, MAX_MAX_STEPS)
-}
-
-fn resolve_context_window_tokens(user_default: u32, model_override: Option<u32>) -> u32 {
-    model_override
-        .unwrap_or(user_default)
-        .clamp(MIN_CONTEXT_WINDOW_TOKENS, MAX_CONTEXT_WINDOW_TOKENS)
-}
-
-fn err_status(err: &AppError) -> TurnStatus {
-    match err {
-        AppError::Cancelled(_) => TurnStatus::Cancelled,
-        _ => TurnStatus::Failed,
-    }
-}
-
-pub fn start_turn(state: BackendState, session_id: String, text: String) -> AppResult<String> {
-    let session = state.storage.get_session(&session_id)?;
-    let title = if session.title == "New chat" {
-        Some(title_from_first_prompt(&text))
-    } else {
-        None
-    };
-    state
-        .storage
-        .touch_session_for_turn(&session_id, title.as_deref())?;
-    state
-        .storage
-        .set_last_opened_session_id(Some(&session_id))?;
-
-    let turn = crate::backend::models::new_chat_turn(session_id.clone(), text.clone());
-    let user_message =
-        crate::backend::models::new_user_chat_message(session_id.clone(), turn.id.clone(), text);
-    state.storage.insert_turn(&turn)?;
-    let provider = if let Some(provider_id) = session.provider_profile_id.as_deref() {
-        state.get_provider_profile(provider_id)?
-    } else {
-        None
-    };
-    state
-        .storage
-        .insert_turn_usage_metric_start(&turn, provider.as_ref())?;
-    state.storage.insert_message(&user_message)?;
-    state.publish_sessions_changed()?;
-    state.ws_hub.emit_turn_event(
-        &turn.id,
-        "chat.turn.started",
-        TurnStartedPayload {
-            session_id,
-            turn: turn.clone(),
-            user_message,
-        },
-    )?;
-    state.register_turn(turn.id.clone());
-    spawn_turn(state, turn.clone());
-    Ok(turn.id)
-}
-
-#[cfg(test)]
-mod tests {
-    use aquaregia::Message;
-
-    use super::{
-        clamp_max_steps, compact_in_memory_messages, extract_message_text,
-        resolve_context_window_tokens, MAX_MAX_STEPS, MIN_MAX_STEPS, STEP_SUMMARY_MARKER,
-        SUMMARY_MARKER,
-    };
-
-    #[test]
-    fn in_memory_compaction_keeps_latest_message() {
-        let mut messages = vec![
-            Message::system_text("system"),
-            Message::user_text("u1"),
-            Message::assistant_text("a1"),
-            Message::user_text("u2"),
-            Message::assistant_text("a2"),
-            Message::user_text("u3"),
-        ];
-
-        let summary = compact_in_memory_messages(&mut messages).expect("summary");
-        assert!(!summary.is_empty());
-        assert_eq!(messages.len(), 3);
-        assert!(extract_message_text(&messages[1]).starts_with(STEP_SUMMARY_MARKER));
-        assert_eq!(extract_message_text(&messages[2]), "u3");
-    }
-
-    #[test]
-    fn in_memory_compaction_preserves_previous_summary_slot() {
-        let mut messages = vec![
-            Message::system_text("system"),
-            Message::user_text(format!("{SUMMARY_MARKER}\nold")),
-            Message::user_text("u1"),
-            Message::assistant_text("a1"),
-            Message::user_text("u2"),
-        ];
-
-        compact_in_memory_messages(&mut messages).expect("summary");
-        assert!(extract_message_text(&messages[1]).starts_with(SUMMARY_MARKER));
-        assert!(extract_message_text(&messages[2]).starts_with(STEP_SUMMARY_MARKER));
-        assert_eq!(extract_message_text(&messages[3]), "u2");
-    }
-
-    #[test]
-    fn clamp_max_steps_keeps_bounds() {
-        assert_eq!(clamp_max_steps(0), MIN_MAX_STEPS);
-        assert_eq!(clamp_max_steps(8), MIN_MAX_STEPS);
-        assert_eq!(clamp_max_steps(64), 64);
-        assert_eq!(clamp_max_steps(u8::MAX), MAX_MAX_STEPS);
-    }
-
-    #[test]
-    fn resolve_context_window_tokens_prefers_model_override() {
-        assert_eq!(resolve_context_window_tokens(120_000, None), 120_000);
-        assert_eq!(
-            resolve_context_window_tokens(120_000, Some(150_000)),
-            150_000
-        );
-    }
 }

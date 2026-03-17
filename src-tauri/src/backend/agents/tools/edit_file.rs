@@ -4,16 +4,16 @@ use std::fs;
 
 use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::models::new_tool_approval;
 
 use super::filesystem_context::{
-    apply_ordered_edits, await_approval, build_mutation_preview, create_unified_diff,
-    read_text_if_exists, truncate, validate_path, write_file_content_atomic, FileEdit,
-    FilesystemToolContext, MAX_TOOL_OUTPUT_CHARS,
+    apply_ordered_edits, build_mutation_preview, create_unified_diff, read_text_if_exists,
+    truncate, validate_path, write_file_content_atomic, FileEdit, FilesystemToolContext,
+    MAX_TOOL_OUTPUT_CHARS,
 };
+use super::tool_runtime::{ToolApprovalMode, ToolApprovalOutcome, ToolApprovalRequest};
 
 pub const EDIT_FILE_TOOL_NAME: &str = "edit_file";
 
@@ -37,7 +37,7 @@ struct EditFileArgs {
 
 /// 执行 `edit_file` 工具的核心逻辑。
 ///
-/// 支持 `dry_run` 预览；非 dry-run 需要人工审批后落盘。
+/// 支持 `dry_run` 预览；非 dry-run 只提供审批规格，审批决策由 runtime 统一处理。
 pub(crate) async fn execute_edit_file(
     context: &FilesystemToolContext,
     tool_name: &str,
@@ -82,39 +82,20 @@ pub(crate) async fn execute_edit_file(
         }));
     }
 
-    if context.should_skip_mutation_approval() {
-        write_file_content_atomic(&resolved, &next)?;
-        context.storage.record_file_operation(
-            &context.session_id,
-            &context.turn_id,
-            Some(&tool_call.call_id),
-            "edit_file",
-            &resolved.to_string_lossy(),
-            "ok",
-            Some(next.len()),
-        )?;
-        return Ok(json!({
-            "action": "edit_file",
-            "path": resolved.to_string_lossy(),
-            "dry_run": false,
-            "bytes_written": next.len(),
-            "diff": truncate(&diff, MAX_TOOL_OUTPUT_CHARS),
-            "approval_bypassed": true,
-        }));
-    }
+    let approval = context
+        .runtime
+        .authorize_tool_call(
+            &tool_call,
+            ToolApprovalRequest {
+                mode: ToolApprovalMode::Default,
+                action: "edit_file".to_string(),
+                subject: resolved.to_string_lossy().to_string(),
+                preview_json: build_mutation_preview(&resolved, &previous, &next),
+            },
+        )
+        .await?;
 
-    let preview_json = build_mutation_preview(&resolved, &previous, &next);
-    let approval = new_tool_approval(
-        context.session_id.clone(),
-        context.turn_id.clone(),
-        tool_call.call_id.clone(),
-        "edit_file",
-        resolved.to_string_lossy().to_string(),
-        preview_json,
-    );
-    let decision = await_approval(context, &tool_call, &approval).await?;
-
-    if !decision {
+    if approval == ToolApprovalOutcome::Rejected {
         context.storage.record_file_operation(
             &context.session_id,
             &context.turn_id,
@@ -141,20 +122,33 @@ pub(crate) async fn execute_edit_file(
         Some(next.len()),
     )?;
 
-    Ok(json!({
-        "action": "edit_file",
-        "path": resolved.to_string_lossy(),
-        "dry_run": false,
-        "bytes_written": next.len(),
-        "diff": truncate(&diff, MAX_TOOL_OUTPUT_CHARS),
-    }))
+    let mut payload = Map::new();
+    payload.insert("action".to_string(), Value::String("edit_file".to_string()));
+    payload.insert(
+        "path".to_string(),
+        Value::String(resolved.to_string_lossy().to_string()),
+    );
+    payload.insert("dry_run".to_string(), Value::Bool(false));
+    payload.insert(
+        "bytes_written".to_string(),
+        Value::Number(serde_json::Number::from(next.len())),
+    );
+    payload.insert(
+        "diff".to_string(),
+        Value::String(truncate(&diff, MAX_TOOL_OUTPUT_CHARS)),
+    );
+    if approval.approval_bypassed() {
+        payload.insert("approval_bypassed".to_string(), Value::Bool(true));
+    }
+
+    Ok(Value::Object(payload))
 }
 
 pub fn build_edit_file_tool(context: FilesystemToolContext) -> Tool {
     let workspace_root = context.workspace_root.to_string_lossy().to_string();
     tool(EDIT_FILE_TOOL_NAME)
         .description(format!(
-            "Apply ordered text edits and return a diff. If dryRun=true, only preview the diff. Paths can be absolute or relative to workspace root `{workspace_root}`."
+            "Apply ordered text edits and return a diff. If dryRun=true, only preview the diff. Non-dry-run edits require approval in default mode and run directly in full_access mode. Paths can be absolute or relative to workspace root `{workspace_root}`."
         ))
         .raw_schema(json!({
             "type": "object",

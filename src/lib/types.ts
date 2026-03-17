@@ -87,12 +87,18 @@ export interface ToolApproval {
   turn_id: string
   call_id: string
   action: string
-  path: string
+  subject: string
   preview_json: {
+    kind?: 'file_diff' | 'command'
     path?: string
     diff?: string
     old_excerpt?: string
     new_excerpt?: string
+    command?: string
+    cwd?: string
+    timeout_ms?: number
+    risk_flags?: string[]
+    description?: string
   }
   status: string
   created_at: string
@@ -279,65 +285,6 @@ export interface AgentMemoryCompactedPayload {
   session_id: string
   compacted_messages: number
   summary_preview: string
-}
-
-export type TimelineItem =
-  | {
-      id: string
-      kind: 'step'
-      step: number
-      status: 'started' | 'finished'
-      outputText: string
-      reasoningText: string
-      usage?: Usage
-    }
-  | {
-      id: string
-      kind: 'tool'
-      step: number
-      state: string
-      toolCall: ToolCall
-      toolResult?: ToolResult
-      durationMs?: number
-      approval?: ToolApproval | null
-    }
-
-export interface TurnViewState {
-  turn: ChatTurn
-  sessionId: string
-  timeline: TimelineItem[]
-  liveStepsById: Record<string, Extract<TimelineItem, { kind: 'step' }>>
-  usageTotal?: Usage
-  error?: string
-}
-
-// --- Render units for turn-centric message rendering ---
-
-export interface ToolRenderUnit {
-  callId: string
-  toolName: string
-  argsJson: Record<string, unknown>
-  result?: ToolResult
-  durationMs?: number
-  isLive: boolean
-  approval?: ToolApproval | null
-}
-
-export interface StepRenderUnit {
-  step: number
-  isLive: boolean
-  outputText: string
-  reasoningText: string
-  tools: ToolRenderUnit[]
-}
-
-export interface TurnRenderUnit {
-  turnId: string
-  userText: string
-  steps: StepRenderUnit[]
-  status: string
-  isActive: boolean
-  error?: string
 }
 
 export type UsageStatsRange = '24h' | '7d' | '30d' | 'all'

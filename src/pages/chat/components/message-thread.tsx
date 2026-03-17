@@ -5,7 +5,7 @@ import { Streamdown } from 'streamdown'
 
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
-import type { StepRenderUnit, ToolRenderUnit, TurnRenderUnit } from '@/lib/types'
+import type { StepRenderUnit, ToolRenderUnit, TurnRenderUnit } from '@/pages/chat/types'
 
 const streamdownPlugins = { code }
 

@@ -1,5 +1,5 @@
 import { ArrowLeft, History, MoreHorizontal, Pencil, Settings2, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type PointerEventHandler } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -22,6 +22,7 @@ interface AppSidebarProps {
   activeSessionId: string | null
   activeView?: 'chat' | 'settings'
   activeSettingsSection?: SettingsSection | null
+  enableWindowDrag?: boolean
   onCreateSession: () => void
   onDeleteSession: (sessionId: string) => Promise<void>
   onRenameSession: (sessionId: string, title: string) => Promise<void>
@@ -29,6 +30,7 @@ interface AppSidebarProps {
   onSelectSettingsSection: (section: SettingsSection) => void
   onOpenChat: () => void
   onOpenSettings: () => void
+  onWindowDragPointerDown?: PointerEventHandler<HTMLDivElement>
 }
 
 const SESSION_TITLE_MAX_LENGTH = 48
@@ -39,6 +41,7 @@ export function AppSidebar({
   activeSessionId,
   activeView = 'chat',
   activeSettingsSection = null,
+  enableWindowDrag = false,
   onCreateSession,
   onDeleteSession,
   onRenameSession,
@@ -46,6 +49,7 @@ export function AppSidebar({
   onSelectSettingsSection,
   onOpenChat,
   onOpenSettings,
+  onWindowDragPointerDown,
 }: AppSidebarProps) {
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
   const [renameTitle, setRenameTitle] = useState('')
@@ -100,8 +104,12 @@ export function AppSidebar({
   return (
     <TooltipProvider delay={200}>
       <aside className='flex h-full flex-col overflow-hidden'>
-        <div className='px-4 pt-2'>
-          <p className='text-sm font-semibold tracking-[0.12em] text-foreground/75'>youclaw</p>
+        <div
+          className={cn('px-4 pt-2', enableWindowDrag && 'pb-2 pt-11')}
+          data-tauri-drag-region={enableWindowDrag ? '' : undefined}
+          onPointerDown={enableWindowDrag ? onWindowDragPointerDown : undefined}
+        >
+          <p className='text-2xl font-semibold tracking-[0.12em] text-foreground/75'>YouClaw</p>
         </div>
 
         <div className='no-scrollbar mt-1 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-4'>
