@@ -17,13 +17,13 @@ use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::{
     flatten_provider_profiles, message_from_record, now_timestamp, AgentConfigPayload,
     AgentConfigUpdateRequest, ArchivedSessionsPayload, BootstrapPayload, ChatMessage, ChatSession,
-    ChatTurn, MemoryReindexPayload, MemorySearchHit, MessageRole, ProviderAccount,
-    ProviderProfile, SessionsChangedPayload, StoredProviders, ToolApproval, TurnStatus,
-    UsageLogDetailPayload, UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest,
-    UsageLogsPayload, UsageModelStatsItem, UsageModelStatsPayload, UsagePage,
-    UsageProviderStatsItem, UsageProviderStatsPayload, UsageStatsListRequest,
-    UsageSummaryPayload, UsageSummaryRequest, UsageToolLogItem, UsageToolStatsItem,
-    UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D, USAGE_RANGE_7D, USAGE_RANGE_ALL,
+    ChatTurn, MemoryReindexPayload, MemorySearchHit, MessageRole, ProviderAccount, ProviderProfile,
+    SessionsChangedPayload, StoredProviders, ToolApproval, TurnStatus, UsageLogDetailPayload,
+    UsageLogDetailRequest, UsageLogItem, UsageLogsListRequest, UsageLogsPayload,
+    UsageModelStatsItem, UsageModelStatsPayload, UsagePage, UsageProviderStatsItem,
+    UsageProviderStatsPayload, UsageStatsListRequest, UsageSummaryPayload, UsageSummaryRequest,
+    UsageToolLogItem, UsageToolStatsItem, UsageToolStatsPayload, USAGE_RANGE_24H, USAGE_RANGE_30D,
+    USAGE_RANGE_7D, USAGE_RANGE_ALL,
 };
 
 #[derive(Clone)]
@@ -181,8 +181,8 @@ mod tests {
 
     use super::{memory::build_fts_query, normalize_language, StorageService};
     use crate::backend::models::{
-        new_chat_session, new_provider_account, new_provider_model, CreateProviderModelRequest,
-        CreateProviderRequest,
+        new_chat_session, new_chat_turn, new_provider_account, new_provider_model,
+        new_user_chat_message, CreateProviderModelRequest, CreateProviderRequest,
     };
 
     #[test]
@@ -223,6 +223,37 @@ mod tests {
         let loaded = storage.list_sessions().expect("list sessions");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, session.id);
+    }
+
+    #[test]
+    fn finds_latest_empty_session_without_history() {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+
+        let mut reusable_session = new_chat_session(None);
+        reusable_session.created_at = "2025-01-01T00:00:01Z".to_string();
+        reusable_session.updated_at = reusable_session.created_at.clone();
+        storage
+            .insert_session(&reusable_session)
+            .expect("insert reusable session");
+
+        let mut non_empty_session = new_chat_session(None);
+        non_empty_session.created_at = "2025-01-01T00:00:02Z".to_string();
+        non_empty_session.updated_at = non_empty_session.created_at.clone();
+        storage
+            .insert_session(&non_empty_session)
+            .expect("insert non-empty session");
+
+        let turn = new_chat_turn(non_empty_session.id.clone(), "hello");
+        storage.insert_turn(&turn).expect("insert turn");
+        let message = new_user_chat_message(non_empty_session.id.clone(), turn.id.clone(), "hello");
+        storage.insert_message(&message).expect("insert message");
+
+        let found = storage
+            .find_latest_empty_session()
+            .expect("find latest empty session")
+            .expect("empty session");
+        assert_eq!(found.id, reusable_session.id);
     }
 
     #[test]

@@ -50,6 +50,7 @@ export function AppLayout() {
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const resizeAnimationFrameRef = useRef<number | null>(null)
   const pendingSidebarWidthRef = useRef<number | null>(null)
+  const createSessionRequestRef = useRef<Promise<string> | null>(null)
 
   const sessionIdFromRoute = params.sessionId ?? null
   const isSettingsPage =
@@ -61,6 +62,7 @@ export function AppLayout() {
   const initialized = useAppStore((state) => state.initialized)
   const providerAccounts = useAppStore((state) => state.providerAccounts)
   const sessions = useAppStore((state) => state.sessions)
+  const messagesBySession = useAppStore((state) => state.messagesBySession)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
@@ -74,6 +76,14 @@ export function AppLayout() {
   const selectedSidebarSessionId = sessionIdFromRoute ?? activeSessionId ?? sessions[0]?.id ?? null
   const contentRouteKey = sessionIdFromRoute ? `chat:${sessionIdFromRoute}` : location.pathname
   const useMacOverlayTitlebar = isMacPlatform()
+  const latestSession = sessions[0] ?? null
+  const latestSessionHasMessages = latestSession
+    ? (messagesBySession[latestSession.id]?.length ?? 0) > 0
+    : false
+  const latestReusableSessionId =
+    latestSession !== null && latestSession.last_turn_at === null && !latestSessionHasMessages
+      ? latestSession.id
+      : null
 
   function getSidebarMaxWidth() {
     const shellWidth = shellRef.current?.clientWidth
@@ -168,19 +178,45 @@ export function AppLayout() {
   }
 
   async function handleCreateSession() {
+    if (latestReusableSessionId) {
+      navigate({
+        pathname: buildChatPath(latestReusableSessionId),
+      })
+      return
+    }
+
+    if (createSessionRequestRef.current) {
+      const sessionId = await createSessionRequestRef.current
+      navigate({
+        pathname: buildChatPath(sessionId),
+      })
+      return
+    }
+
     const fallbackProvider = providers[0] ?? null
     const providerForNewSession = activeSession?.provider_profile_id
       ? (providers.find((item) => item.id === activeSession.provider_profile_id) ??
         fallbackProvider)
       : fallbackProvider
 
-    const created = await getAppClient().request<{ id: string }>('sessions.create', {
-      provider_profile_id: providerForNewSession?.id ?? null,
-    })
+    const createSessionRequest = (async () => {
+      const created = await getAppClient().request<{ id: string }>('sessions.create', {
+        provider_profile_id: providerForNewSession?.id ?? null,
+      })
+      return created.id
+    })()
+    createSessionRequestRef.current = createSessionRequest
 
-    navigate({
-      pathname: buildChatPath(created.id),
-    })
+    try {
+      const sessionId = await createSessionRequest
+      navigate({
+        pathname: buildChatPath(sessionId),
+      })
+    } finally {
+      if (createSessionRequestRef.current === createSessionRequest) {
+        createSessionRequestRef.current = null
+      }
+    }
   }
 
   async function handleDeleteSession(targetSessionId: string) {

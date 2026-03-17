@@ -15,6 +15,18 @@ impl BackendState {
                 )));
             }
         }
+        if let Some(existing_session) = self.storage.find_latest_empty_session()? {
+            if let Some(profile_id) = provider_profile_id.as_deref() {
+                if existing_session.provider_profile_id.as_deref() != Some(profile_id) {
+                    self.storage
+                        .update_session_provider(&existing_session.id, profile_id)?;
+                }
+            }
+            self.storage
+                .set_last_opened_session_id(Some(&existing_session.id))?;
+            self.publish_sessions_changed()?;
+            return self.storage.get_session(&existing_session.id);
+        }
         let session = new_chat_session(provider_profile_id);
         self.storage.insert_session(&session)?;
         self.storage.set_last_opened_session_id(Some(&session.id))?;

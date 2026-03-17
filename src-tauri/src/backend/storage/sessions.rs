@@ -1,8 +1,37 @@
 use super::*;
-use aquaregia::AgentStep;
 use crate::backend::models::SessionApprovalMode;
+use aquaregia::AgentStep;
 
 impl StorageService {
+    pub fn find_latest_empty_session(&self) -> AppResult<Option<ChatSession>> {
+        let conn = self.open_connection()?;
+        conn.query_row(
+            "SELECT s.id, s.title, s.provider_profile_id, s.approval_mode, s.created_at, s.updated_at, s.last_turn_at, s.archived_at
+             FROM chat_sessions s
+             WHERE s.archived_at IS NULL
+               AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.session_id = s.id)
+               AND NOT EXISTS (SELECT 1 FROM chat_turns t WHERE t.session_id = s.id)
+             ORDER BY COALESCE(s.last_turn_at, s.updated_at) DESC, s.created_at DESC
+             LIMIT 1",
+            [],
+            |row| {
+                let approval_mode_raw = row.get::<_, String>(3)?;
+                Ok(ChatSession {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    provider_profile_id: row.get(2)?,
+                    approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                    last_turn_at: row.get(6)?,
+                    archived_at: row.get(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn list_sessions(&self) -> AppResult<Vec<ChatSession>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
@@ -215,12 +244,12 @@ impl StorageService {
             .optional()?;
         match archived_at {
             None => {
-                return Err(AppError::NotFound(format!("archived session `{session_id}`")));
+                return Err(AppError::NotFound(format!(
+                    "archived session `{session_id}`"
+                )));
             }
             Some(None) => {
-                return Err(AppError::Validation(
-                    "session is not archived".to_string(),
-                ));
+                return Err(AppError::Validation("session is not archived".to_string()));
             }
             Some(Some(_)) => {}
         }
@@ -245,7 +274,9 @@ impl StorageService {
             .optional()?;
         match archived_at {
             None => {
-                return Err(AppError::NotFound(format!("archived session `{session_id}`")));
+                return Err(AppError::NotFound(format!(
+                    "archived session `{session_id}`"
+                )));
             }
             Some(None) => {
                 return Err(AppError::Validation(
@@ -269,13 +300,31 @@ impl StorageService {
              )",
             [session_id],
         )?;
-        tx.execute("DELETE FROM turn_tool_metrics WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM turn_usage_metrics WHERE session_id = ?1", [session_id])?;
+        tx.execute(
+            "DELETE FROM turn_tool_metrics WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM turn_usage_metrics WHERE session_id = ?1",
+            [session_id],
+        )?;
         tx.execute("DELETE FROM chat_steps WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM tool_approvals WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM file_operations WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM session_memory_state WHERE session_id = ?1", [session_id])?;
-        tx.execute("DELETE FROM chat_messages WHERE session_id = ?1", [session_id])?;
+        tx.execute(
+            "DELETE FROM tool_approvals WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM file_operations WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM session_memory_state WHERE session_id = ?1",
+            [session_id],
+        )?;
+        tx.execute(
+            "DELETE FROM chat_messages WHERE session_id = ?1",
+            [session_id],
+        )?;
         tx.execute("DELETE FROM chat_turns WHERE session_id = ?1", [session_id])?;
         tx.execute("DELETE FROM chat_sessions WHERE id = ?1", [session_id])?;
         tx.commit()?;
