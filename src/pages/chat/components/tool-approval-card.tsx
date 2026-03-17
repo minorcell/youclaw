@@ -38,14 +38,20 @@ export function ToolApprovalCard({ approval, onResolveApproval }: ToolApprovalCa
           {approval.preview_json.risk_flags?.length ? (
             <div className='flex flex-wrap gap-2'>
               {approval.preview_json.risk_flags.map((flag) => (
-                <Badge className='bg-destructive/10 text-destructive' key={flag} variant='secondary'>
+                <Badge
+                  className='bg-destructive/10 text-destructive'
+                  key={flag}
+                  variant='secondary'
+                >
                   {flag}
                 </Badge>
               ))}
             </div>
           ) : null}
           <pre className='max-h-48 overflow-auto rounded-xl bg-muted/70 p-3 text-[11px] leading-5 text-foreground/85'>
-            {approval.preview_json.command ?? approval.preview_json.description ?? 'No command preview'}
+            {approval.preview_json.command ??
+              approval.preview_json.description ??
+              'No command preview'}
           </pre>
         </div>
       ) : (

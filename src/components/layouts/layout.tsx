@@ -283,7 +283,9 @@ export function AppLayout() {
       return
     }
     // Keep native drag-region behavior while adding an explicit fallback.
-    void getCurrentWindow().startDragging().catch(() => undefined)
+    void getCurrentWindow()
+      .startDragging()
+      .catch(() => undefined)
   }
   const handlePosition = sidebarWidth
 

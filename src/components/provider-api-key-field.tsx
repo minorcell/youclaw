@@ -25,7 +25,10 @@ function stripEnvPrefix(value: string): string {
 }
 
 export function normalizeProviderApiKeyEnvName(value: string): string {
-  return stripEnvPrefix(value).trim().replace(/[;；]+$/, '').trim()
+  return stripEnvPrefix(value)
+    .trim()
+    .replace(/[;；]+$/, '')
+    .trim()
 }
 
 export function parseProviderApiKeyInput(

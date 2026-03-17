@@ -1,27 +1,27 @@
 {
   "name": "youclaw",
   "version": "0.1.0",
-  "description": "A local-first desktop AI agent workspace built with Tauri, React, and Rust.",
-  "author": "minorcell",
-  "license": "MIT",
   "private": true,
-  "type": "module",
+  "description": "A local-first desktop AI agent workspace built with Tauri, React, and Rust.",
+  "keywords": [
+    "agent",
+    "desktop",
+    "react",
+    "rust",
+    "tauri",
+    "workspace"
+  ],
   "homepage": "https://github.com/minorcell/youclaw",
   "bugs": {
     "url": "https://github.com/minorcell/youclaw/issues"
   },
+  "license": "MIT",
+  "author": "minorcell",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/minorcell/youclaw.git"
   },
-  "keywords": [
-    "agent",
-    "desktop",
-    "tauri",
-    "react",
-    "rust",
-    "workspace"
-  ],
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "clear-cache": "bash ./scripts/clear-youclaw-cache.sh",

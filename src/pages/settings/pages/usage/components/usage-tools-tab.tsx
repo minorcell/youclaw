@@ -39,7 +39,9 @@ export function UsageToolsTab({
                 </p>
               </div>
               <p className='text-xs text-muted-foreground'>调用 {formatNumber(item.call_count)}</p>
-              <p className='text-xs text-muted-foreground'>成功 {formatNumber(item.success_count)}</p>
+              <p className='text-xs text-muted-foreground'>
+                成功 {formatNumber(item.success_count)}
+              </p>
               <p className='text-xs text-muted-foreground'>错误 {formatNumber(item.error_count)}</p>
               <p className='text-xs text-muted-foreground'>
                 均耗时 {formatDuration(item.avg_duration_ms)}

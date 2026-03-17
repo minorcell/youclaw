@@ -91,7 +91,15 @@ export function errorMessageFromUnknown(error: unknown): string {
   return '操作失败，请稍后重试。'
 }
 
-export function SummaryItem({ label, value, hint }: { label: string; value: string; hint?: string }) {
+export function SummaryItem({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string
+  hint?: string
+}) {
   return (
     <div className='rounded-xl bg-background/80 p-3'>
       <p className='text-xs uppercase tracking-[0.16em] text-muted-foreground'>{label}</p>

@@ -1,8 +1,6 @@
 import { create } from 'zustand'
 
-import type {
-  WsEnvelope,
-} from '@/lib/types'
+import type { WsEnvelope } from '@/lib/types'
 import { createInitialAppStoreData, type AppStoreData, type WsStatus } from '@/store/app-state'
 import { reduceEnvelopeData } from '@/store/reducers/envelope-reducer'
 

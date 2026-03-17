@@ -59,8 +59,11 @@ export function ChatComposer({
   const isComposingRef = useRef(false)
   const lastCompositionEndAtRef = useRef(0)
 
-  const selectedProvider = providers.find((p) => p.id === selectedProviderId) ?? providers[0] ?? null
-  const selectedModel = selectedProvider ? (selectedProvider.model_name || selectedProvider.model) : '选择模型'
+  const selectedProvider =
+    providers.find((p) => p.id === selectedProviderId) ?? providers[0] ?? null
+  const selectedModel = selectedProvider
+    ? selectedProvider.model_name || selectedProvider.model
+    : '选择模型'
   const approvalModeLabel = labelForSessionApprovalMode(approvalMode)
   const ApprovalModeIcon = approvalMode === 'full_access' ? ShieldCheck : Shield
 
@@ -142,7 +145,10 @@ export function ChatComposer({
 
         <div className='flex min-w-0 items-center gap-2'>
           <DropdownMenu modal={false}>
-            <DropdownMenuTrigger className={cn(COMPOSER_MENU_TRIGGER_CLASSNAME, 'max-w-72')} type='button'>
+            <DropdownMenuTrigger
+              className={cn(COMPOSER_MENU_TRIGGER_CLASSNAME, 'max-w-72')}
+              type='button'
+            >
               <span className='truncate'>{selectedModel}</span>
               <ChevronDown className='h-3.5 w-3.5 text-muted-foreground' />
             </DropdownMenuTrigger>

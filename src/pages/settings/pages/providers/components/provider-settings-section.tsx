@@ -110,9 +110,7 @@ function normalizeModelValue(value: ModelInputValue): NormalizedModelValue {
 }
 
 function sameModelValue(left: NormalizedModelValue, right: NormalizedModelValue) {
-  return (
-    left.model === right.model && left.context_window_tokens === right.context_window_tokens
-  )
+  return left.model === right.model && left.context_window_tokens === right.context_window_tokens
 }
 
 function formatContextWindowTokens(tokens: number): string {
@@ -258,77 +256,77 @@ function ProviderModelItem({
 
           <TooltipProvider>
             <div className='flex shrink-0 items-center gap-1'>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label='保存模型配置'
-                    disabled={!canSubmit || !isDirty || isBusy}
-                    onClick={() => void onUpdateModel(model.id, normalizedCurrent)}
-                    size='icon-sm'
-                    type='button'
-                  >
-                    {isSaving ? (
-                      <Loader2 className='h-3.5 w-3.5 animate-spin' />
-                    ) : (
-                      <Save className='h-3.5 w-3.5' />
-                    )}
-                  </Button>
-                }
-              />
-              <TooltipContent>保存</TooltipContent>
-            </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label='保存模型配置'
+                      disabled={!canSubmit || !isDirty || isBusy}
+                      onClick={() => void onUpdateModel(model.id, normalizedCurrent)}
+                      size='icon-sm'
+                      type='button'
+                    >
+                      {isSaving ? (
+                        <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                      ) : (
+                        <Save className='h-3.5 w-3.5' />
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>保存</TooltipContent>
+              </Tooltip>
 
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label='测试模型连接'
-                    disabled={!canSubmit || isBusy}
-                    onClick={() =>
-                      void onTestModel({
-                        provider_id: providerId,
-                        model: normalizedCurrent.model,
-                        model_id: model.id,
-                      })
-                    }
-                    size='icon-sm'
-                    type='button'
-                    variant='outline'
-                  >
-                    {isTesting ? (
-                      <Loader2 className='h-3.5 w-3.5 animate-spin' />
-                    ) : (
-                      <FlaskConical className='h-3.5 w-3.5' />
-                    )}
-                  </Button>
-                }
-              />
-              <TooltipContent>测试</TooltipContent>
-            </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label='测试模型连接'
+                      disabled={!canSubmit || isBusy}
+                      onClick={() =>
+                        void onTestModel({
+                          provider_id: providerId,
+                          model: normalizedCurrent.model,
+                          model_id: model.id,
+                        })
+                      }
+                      size='icon-sm'
+                      type='button'
+                      variant='outline'
+                    >
+                      {isTesting ? (
+                        <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                      ) : (
+                        <FlaskConical className='h-3.5 w-3.5' />
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>测试</TooltipContent>
+              </Tooltip>
 
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label='删除模型配置'
-                    className='text-destructive hover:text-destructive'
-                    disabled={isBusy}
-                    onClick={() => void onDeleteModel(model.id)}
-                    size='icon-sm'
-                    type='button'
-                    variant='ghost'
-                  >
-                    {isDeleting ? (
-                      <Loader2 className='h-3.5 w-3.5 animate-spin' />
-                    ) : (
-                      <Trash2 className='h-3.5 w-3.5' />
-                    )}
-                  </Button>
-                }
-              />
-              <TooltipContent>删除</TooltipContent>
-            </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label='删除模型配置'
+                      className='text-destructive hover:text-destructive'
+                      disabled={isBusy}
+                      onClick={() => void onDeleteModel(model.id)}
+                      size='icon-sm'
+                      type='button'
+                      variant='ghost'
+                    >
+                      {isDeleting ? (
+                        <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                      ) : (
+                        <Trash2 className='h-3.5 w-3.5' />
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>删除</TooltipContent>
+              </Tooltip>
             </div>
           </TooltipProvider>
         </div>
@@ -538,7 +536,9 @@ export function ProviderSettingsSection({
                       </Badge>
                     )}
                   </div>
-                  {newModelError ? <p className='text-xs text-destructive'>{newModelError}</p> : null}
+                  {newModelError ? (
+                    <p className='text-xs text-destructive'>{newModelError}</p>
+                  ) : null}
                   {normalizedNewModel.contextWindowTokensError ? (
                     <p className='text-xs text-destructive'>
                       {normalizedNewModel.contextWindowTokensError}

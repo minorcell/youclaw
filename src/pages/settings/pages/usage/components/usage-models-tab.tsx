@@ -41,8 +41,12 @@ export function UsageModelsTab({
                 </p>
               </div>
               <p className='text-xs text-muted-foreground'>Turn {formatNumber(item.turn_count)}</p>
-              <p className='text-xs text-muted-foreground'>成功 {formatNumber(item.completed_count)}</p>
-              <p className='text-xs text-muted-foreground'>Token {formatNumber(item.total_tokens)}</p>
+              <p className='text-xs text-muted-foreground'>
+                成功 {formatNumber(item.completed_count)}
+              </p>
+              <p className='text-xs text-muted-foreground'>
+                Token {formatNumber(item.total_tokens)}
+              </p>
               <p className='text-xs text-muted-foreground'>
                 均耗时 {formatDuration(item.avg_duration_ms)}
               </p>

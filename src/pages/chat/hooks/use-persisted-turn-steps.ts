@@ -4,7 +4,9 @@ import { getAppClient } from '@/lib/app-client'
 import type { AgentStep, TurnStepsListPayload } from '@/lib/types'
 
 export function usePersistedTurnSteps(activeTurnId: string | null) {
-  const [persistedStepsByTurnId, setPersistedStepsByTurnId] = useState<Record<string, AgentStep[]>>({})
+  const [persistedStepsByTurnId, setPersistedStepsByTurnId] = useState<Record<string, AgentStep[]>>(
+    {},
+  )
 
   useEffect(() => {
     if (!activeTurnId) {
