@@ -2,7 +2,7 @@ import { Clock3, FolderCode, Hammer } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
-import type { TurnViewState } from '@/lib/types'
+import type { TurnViewState } from '@/store/types'
 
 import { ToolApprovalCard } from './tool-approval-card'
 

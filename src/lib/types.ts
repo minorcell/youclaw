@@ -287,65 +287,6 @@ export interface AgentMemoryCompactedPayload {
   summary_preview: string
 }
 
-export type TimelineItem =
-  | {
-      id: string
-      kind: 'step'
-      step: number
-      status: 'started' | 'finished'
-      outputText: string
-      reasoningText: string
-      usage?: Usage
-    }
-  | {
-      id: string
-      kind: 'tool'
-      step: number
-      state: string
-      toolCall: ToolCall
-      toolResult?: ToolResult
-      durationMs?: number
-      approval?: ToolApproval | null
-    }
-
-export interface TurnViewState {
-  turn: ChatTurn
-  sessionId: string
-  timeline: TimelineItem[]
-  liveStepsById: Record<string, Extract<TimelineItem, { kind: 'step' }>>
-  usageTotal?: Usage
-  error?: string
-}
-
-// --- Render units for turn-centric message rendering ---
-
-export interface ToolRenderUnit {
-  callId: string
-  toolName: string
-  argsJson: Record<string, unknown>
-  result?: ToolResult
-  durationMs?: number
-  isLive: boolean
-  approval?: ToolApproval | null
-}
-
-export interface StepRenderUnit {
-  step: number
-  isLive: boolean
-  outputText: string
-  reasoningText: string
-  tools: ToolRenderUnit[]
-}
-
-export interface TurnRenderUnit {
-  turnId: string
-  userText: string
-  steps: StepRenderUnit[]
-  status: string
-  isActive: boolean
-  error?: string
-}
-
 export type UsageStatsRange = '24h' | '7d' | '30d' | 'all'
 
 export interface UsagePage {
