@@ -1,14 +1,32 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import {
+  parseProviderApiKeyInput,
+  ProviderApiKeyField,
+  serializeProviderApiKeyInput,
+  validateProviderApiKeyInput,
+} from '@/components/provider-api-key-field'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
+import {
+  DEFAULT_PROVIDER_BASE_URL,
+  DEFAULT_PROVIDER_MODEL,
+  DEFAULT_PROVIDER_NAME,
+} from '@/lib/provider-defaults'
 import type { ChatSession, ProviderAccount, ProviderModel } from '@/lib/types'
 import { useAppStore } from '@/store/app-store'
+
+interface ProviderOnboardingFormValue {
+  profile_name: string
+  base_url: string
+  api_key: ReturnType<typeof parseProviderApiKeyInput>
+  model: string
+}
 
 function errorMessageFromUnknown(error: unknown): string {
   if (typeof error === 'string') {
@@ -36,15 +54,19 @@ export function ProviderOnboardingPage() {
   const sessions = useAppStore((state) => state.sessions)
   const firstProvider = useMemo(() => providerAccounts[0] ?? null, [providerAccounts])
   const firstModel = useMemo(() => firstProvider?.models[0] ?? null, [firstProvider])
+  const firstApiKey = useMemo(
+    () => parseProviderApiKeyInput(firstProvider?.api_key ?? ''),
+    [firstProvider?.api_key],
+  )
 
-  const initial = useMemo(
+  const initial = useMemo<ProviderOnboardingFormValue>(
     () => ({
-      profile_name: firstProvider?.name ?? 'deepseek',
-      base_url: firstProvider?.base_url ?? 'https://api.deepseek.com',
-      api_key: firstProvider?.api_key ?? '',
-      model: firstModel?.model ?? 'deepseek-chat',
+      profile_name: firstProvider?.name ?? DEFAULT_PROVIDER_NAME,
+      base_url: firstProvider?.base_url ?? DEFAULT_PROVIDER_BASE_URL,
+      api_key: firstApiKey,
+      model: firstModel?.model ?? DEFAULT_PROVIDER_MODEL,
     }),
-    [firstProvider, firstModel],
+    [firstApiKey, firstModel?.model, firstProvider?.base_url, firstProvider?.name],
   )
 
   const [form, setForm] = useState(initial)
@@ -52,6 +74,19 @@ export function ProviderOnboardingPage() {
   useEffect(() => {
     setForm(initial)
   }, [initial])
+
+  const normalizedProfileName = form.profile_name.trim()
+  const normalizedBaseUrl = form.base_url.trim()
+  const normalizedModel = form.model.trim()
+  const normalizedApiKey = serializeProviderApiKeyInput(form.api_key)
+  const apiKeyError = useMemo(() => validateProviderApiKeyInput(form.api_key), [form.api_key])
+  const canSubmit =
+    !busy &&
+    normalizedProfileName.length > 0 &&
+    normalizedBaseUrl.length > 0 &&
+    normalizedModel.length > 0 &&
+    normalizedApiKey.length > 0 &&
+    apiKeyError === null
 
   async function ensureSession(providerProfileId: string, existingSessions: ChatSession[]) {
     const client = getAppClient()
@@ -75,32 +110,33 @@ export function ProviderOnboardingPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!canSubmit) return
     setBusy(true)
     try {
       const client = getAppClient()
       const provider = firstProvider
         ? await client.request<ProviderAccount>('providers.update', {
             id: firstProvider.id,
-            profile_name: form.profile_name,
-            base_url: form.base_url,
-            api_key: form.api_key,
+            profile_name: normalizedProfileName,
+            base_url: normalizedBaseUrl,
+            api_key: normalizedApiKey,
           })
         : await client.request<ProviderAccount>('providers.create', {
-            profile_name: form.profile_name,
-            base_url: form.base_url,
-            api_key: form.api_key,
+            profile_name: normalizedProfileName,
+            base_url: normalizedBaseUrl,
+            api_key: normalizedApiKey,
           })
 
       const targetModel = firstModel
         ? await client.request<ProviderModel>('providers.models.update', {
             id: firstModel.id,
-            model_name: form.model,
-            model: form.model,
+            model_name: normalizedModel,
+            model: normalizedModel,
           })
         : await client.request<ProviderModel>('providers.models.create', {
             provider_id: provider.id,
-            model_name: form.model,
-            model: form.model,
+            model_name: normalizedModel,
+            model: normalizedModel,
           })
 
       await ensureSession(targetModel.id, sessions)
@@ -134,7 +170,7 @@ export function ProviderOnboardingPage() {
               <Input
                 value={form.profile_name}
                 onChange={(e) => setForm((c) => ({ ...c, profile_name: e.target.value }))}
-                placeholder='OpenAI-compatible'
+                placeholder={DEFAULT_PROVIDER_NAME}
               />
             </div>
             <div className='space-y-2'>
@@ -144,20 +180,15 @@ export function ProviderOnboardingPage() {
               <Input
                 value={form.base_url}
                 onChange={(e) => setForm((c) => ({ ...c, base_url: e.target.value }))}
-                placeholder='https://api.deepseek.com'
+                placeholder={DEFAULT_PROVIDER_BASE_URL}
               />
             </div>
-            <div className='space-y-2'>
-              <Label className='text-xs uppercase tracking-[0.18em] text-muted-foreground'>
-                API KEY
-              </Label>
-              <Input
-                type='password'
-                value={form.api_key}
-                onChange={(e) => setForm((c) => ({ ...c, api_key: e.target.value }))}
-                placeholder='sk-...'
-              />
-            </div>
+            <ProviderApiKeyField
+              error={apiKeyError}
+              label='API Key'
+              onChange={(api_key) => setForm((current) => ({ ...current, api_key }))}
+              value={form.api_key}
+            />
             <div className='space-y-2'>
               <Label className='text-xs uppercase tracking-[0.18em] text-muted-foreground'>
                 模型名称
@@ -165,10 +196,10 @@ export function ProviderOnboardingPage() {
               <Input
                 value={form.model}
                 onChange={(e) => setForm((c) => ({ ...c, model: e.target.value }))}
-                placeholder='deepseek-chat'
+                placeholder={DEFAULT_PROVIDER_MODEL}
               />
             </div>
-            <Button className='w-full' disabled={busy} type='submit'>
+            <Button className='w-full' disabled={!canSubmit} type='submit'>
               {busy ? '连接中...' : '开始使用'}
             </Button>
           </form>

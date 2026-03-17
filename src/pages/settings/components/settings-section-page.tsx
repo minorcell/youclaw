@@ -1,6 +1,7 @@
 import { Navigate, useParams } from 'react-router-dom'
 
 import { AgentConfigSettingsSection } from '@/pages/settings/pages/general/components/agent-config-settings-section'
+import { ArchiveSettingsPage } from '@/pages/settings/pages/archive'
 import { AgentMemoryFilesSection } from '@/pages/settings/pages/memory/components/agent-memory-files-section'
 import { ProvidersSettingsPage } from '@/pages/settings/pages/providers'
 import { ThemeSettingsSection } from '@/pages/settings/pages/theme/components/theme-settings-section'
@@ -59,6 +60,10 @@ export function SettingsSectionPage() {
 
   if (rawSection === 'providers') {
     return <ProvidersSettingsPage />
+  }
+
+  if (rawSection === 'archive') {
+    return <ArchiveSettingsPage />
   }
 
   return <UsageSettingsSection providerAccounts={providerAccounts} />

@@ -1,4 +1,5 @@
 import {
+  Archive,
   Bot,
   ChartColumnIncreasing,
   Palette,
@@ -22,6 +23,7 @@ export const settingsSections: SettingsSection[] = [
   'theme',
   'memory',
   'providers',
+  'archive',
   'usage',
 ]
 
@@ -46,6 +48,11 @@ export const settingsSectionMeta: Record<SettingsSection, SettingsSectionMeta> =
     description: '创建和编辑 OpenAI 兼容的服务商配置',
     icon: Server,
   },
+  archive: {
+    label: '归档记录',
+    description: '查看已归档会话，并支持恢复或彻底删除',
+    icon: Archive,
+  },
   usage: {
     label: '使用统计',
     description: '查看 Turn、Token 消耗与工具调用统计',
@@ -59,6 +66,7 @@ export function isSettingsSection(value: string | null | undefined): value is Se
     value === 'theme' ||
     value === 'memory' ||
     value === 'providers' ||
+    value === 'archive' ||
     value === 'usage'
   )
 }

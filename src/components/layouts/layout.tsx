@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { GripVertical } from 'lucide-react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 
-import { SessionSidebar } from '@/components/layouts/sidebar'
-import { DEFAULT_SETTINGS_SECTION } from '@/pages/settings/sections'
+import { AppSidebar } from '@/components/layouts/sidebar'
+import { DEFAULT_SETTINGS_SECTION, normalizeSettingsSection } from '@/pages/settings/sections'
 import { getAppClient } from '@/lib/app-client'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
 import { cn } from '@/lib/utils'
 import { LoadingScreen } from '@/pages/welcome'
 import { useAppStore } from '@/store/app-store'
+import type { SettingsSection } from '@/store/settings-store'
 
 const SIDEBAR_MIN_WIDTH = 260
 const SIDEBAR_MAX_WIDTH = 520
@@ -16,9 +18,28 @@ const SIDEBAR_DEFAULT_WIDTH = SIDEBAR_MIN_WIDTH
 const CONTENT_MIN_WIDTH = 560
 const SIDEBAR_RESIZE_STEP = 24
 const SIDEBAR_HANDLE_HITBOX = 16
+const MAC_OVERLAY_TITLEBAR_HEIGHT = 36
 
 function clampValue(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+  const userAgentData = (navigator as Navigator & { userAgentData?: { platform?: string } })
+    .userAgentData
+  const platform = userAgentData?.platform ?? navigator.platform ?? ''
+  return /mac/i.test(platform)
+}
+
+function settingsSectionFromPath(pathname: string): string | null {
+  const segments = pathname.split('/').filter(Boolean)
+  if (segments[0] !== 'settings') {
+    return null
+  }
+  return segments[1] ?? null
 }
 
 export function AppLayout() {
@@ -29,14 +50,19 @@ export function AppLayout() {
   const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const resizeAnimationFrameRef = useRef<number | null>(null)
   const pendingSidebarWidthRef = useRef<number | null>(null)
+  const createSessionRequestRef = useRef<Promise<string> | null>(null)
 
   const sessionIdFromRoute = params.sessionId ?? null
   const isSettingsPage =
     location.pathname === '/settings' || location.pathname.startsWith('/settings/')
+  const activeSettingsSection: SettingsSection | null = isSettingsPage
+    ? normalizeSettingsSection(settingsSectionFromPath(location.pathname), DEFAULT_SETTINGS_SECTION)
+    : null
 
   const initialized = useAppStore((state) => state.initialized)
   const providerAccounts = useAppStore((state) => state.providerAccounts)
   const sessions = useAppStore((state) => state.sessions)
+  const messagesBySession = useAppStore((state) => state.messagesBySession)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
@@ -49,6 +75,15 @@ export function AppLayout() {
 
   const selectedSidebarSessionId = sessionIdFromRoute ?? activeSessionId ?? sessions[0]?.id ?? null
   const contentRouteKey = sessionIdFromRoute ? `chat:${sessionIdFromRoute}` : location.pathname
+  const useMacOverlayTitlebar = isMacPlatform()
+  const latestSession = sessions[0] ?? null
+  const latestSessionHasMessages = latestSession
+    ? (messagesBySession[latestSession.id]?.length ?? 0) > 0
+    : false
+  const latestReusableSessionId =
+    latestSession !== null && latestSession.last_turn_at === null && !latestSessionHasMessages
+      ? latestSession.id
+      : null
 
   function getSidebarMaxWidth() {
     const shellWidth = shellRef.current?.clientWidth
@@ -135,20 +170,53 @@ export function AppLayout() {
     return `/chat/${targetSessionId}`
   }
 
+  function handleOpenChat() {
+    const targetSessionId = sessionIdFromRoute ?? activeSessionId ?? sessions[0]?.id ?? null
+    navigate({
+      pathname: targetSessionId ? buildChatPath(targetSessionId) : '/',
+    })
+  }
+
   async function handleCreateSession() {
+    if (latestReusableSessionId) {
+      navigate({
+        pathname: buildChatPath(latestReusableSessionId),
+      })
+      return
+    }
+
+    if (createSessionRequestRef.current) {
+      const sessionId = await createSessionRequestRef.current
+      navigate({
+        pathname: buildChatPath(sessionId),
+      })
+      return
+    }
+
     const fallbackProvider = providers[0] ?? null
     const providerForNewSession = activeSession?.provider_profile_id
       ? (providers.find((item) => item.id === activeSession.provider_profile_id) ??
         fallbackProvider)
       : fallbackProvider
 
-    const created = await getAppClient().request<{ id: string }>('sessions.create', {
-      provider_profile_id: providerForNewSession?.id ?? null,
-    })
+    const createSessionRequest = (async () => {
+      const created = await getAppClient().request<{ id: string }>('sessions.create', {
+        provider_profile_id: providerForNewSession?.id ?? null,
+      })
+      return created.id
+    })()
+    createSessionRequestRef.current = createSessionRequest
 
-    navigate({
-      pathname: buildChatPath(created.id),
-    })
+    try {
+      const sessionId = await createSessionRequest
+      navigate({
+        pathname: buildChatPath(sessionId),
+      })
+    } finally {
+      if (createSessionRequestRef.current === createSessionRequest) {
+        createSessionRequestRef.current = null
+      }
+    }
   }
 
   async function handleDeleteSession(targetSessionId: string) {
@@ -211,6 +279,14 @@ export function AppLayout() {
     const delta = event.key === 'ArrowRight' ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP
     setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth + delta))
   }
+
+  function handleOverlayTitlebarPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return
+    }
+    // Keep native drag-region behavior while adding an explicit fallback.
+    void getCurrentWindow().startDragging().catch(() => undefined)
+  }
   const handlePosition = sidebarWidth
 
   return (
@@ -222,12 +298,23 @@ export function AppLayout() {
           gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)`,
         }}
       >
-        <div className='min-h-0 overflow-hidden'>
-          <SessionSidebar
+        {useMacOverlayTitlebar ? (
+          <div
+            className='absolute inset-x-0 top-0 z-30'
+            data-tauri-drag-region
+            onPointerDown={handleOverlayTitlebarPointerDown}
+            style={{ height: `${MAC_OVERLAY_TITLEBAR_HEIGHT}px` }}
+          />
+        ) : null}
+
+        <div className={cn('min-h-0 overflow-hidden', useMacOverlayTitlebar && 'pt-9')}>
+          <AppSidebar
             activeSessionId={selectedSidebarSessionId}
+            activeSettingsSection={activeSettingsSection}
             activeView={isSettingsPage ? 'settings' : 'chat'}
             onCreateSession={() => void handleCreateSession()}
-            onDeleteSession={(id) => void handleDeleteSession(id)}
+            onDeleteSession={handleDeleteSession}
+            onOpenChat={handleOpenChat}
             onOpenSettings={() =>
               navigate({
                 pathname: `/settings/${DEFAULT_SETTINGS_SECTION}`,
@@ -235,13 +322,18 @@ export function AppLayout() {
             }
             onRenameSession={handleRenameSession}
             onSelectSession={handleSelectSession}
+            onSelectSettingsSection={(section) =>
+              navigate({
+                pathname: `/settings/${section}`,
+              })
+            }
             providers={providers}
             sessions={sessions}
           />
         </div>
 
         <section
-          className='min-h-0 select-none overflow-hidden rounded-l-xl bg-background/85'
+          className='h-full min-h-0 select-none overflow-hidden rounded-l-xl bg-background/85'
           key={contentRouteKey}
         >
           <Outlet />

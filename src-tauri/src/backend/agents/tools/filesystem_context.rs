@@ -1,309 +1,542 @@
-//! 文件系统工具共享上下文与公共逻辑。
+//! 文件系统工具共享上下文与复用辅助函数。
 //!
-//! 说明：
-//! - `filesystem_list_dir` / `filesystem_read_file` / `filesystem_write_file` 三个工具复用本文件；
-//! - 工具定义放在独立文件，本文件只承载共用能力（路径解析、审批等待、审计日志等）；
-//! - 这样可以保持“一个工具一个文件”，同时避免重复实现。
+//! 该模块只负责：
+//! - 统一上下文载体（会话、审批、存储、事件）；
+//! - 路径校验、忽略策略、diff/截断等通用 helper；
+//! - 审批等待等跨工具复用逻辑。
+//!
+//! 具体工具实现放在各自模块中（如 `list_directory.rs` / `write_file.rs`）。
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aquaregia::ToolCall;
+use glob::Pattern;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde_json::{json, Value};
 use similar::{ChangeTag, TextDiff};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::backend::errors::{AppError, AppResult};
-use crate::backend::memory_manager::{
-    resolve_relative_memory_path_from_absolute, BuiltinFtsMemoryManager, MemorySearchManager,
-};
-use crate::backend::models::{new_tool_approval, ToolRequestedPayload};
+use crate::backend::models::{SessionApprovalMode, ToolApproval, ToolRequestedPayload};
 use crate::backend::{ApprovalService, StorageService, WsHub};
 
-/// `read_file` 的最大读取行数，避免单次输出过大。
-pub const MAX_READ_LIMIT: usize = 300;
-/// 工具输出的字符上限，防止消息过大导致前端或模型上下文膨胀。
-const MAX_TOOL_OUTPUT_CHARS: usize = 24_000;
-/// 写文件审批超时时间（秒）。
-const APPROVAL_TIMEOUT_SECS: u64 = 600;
+/// `read_text_file` head/tail line limit.
+pub const MAX_HEAD_TAIL_LIMIT: usize = 1000;
+/// Maximum number of paths allowed in a single `read_files` call.
+pub const MAX_BATCH_READ_FILES: usize = 32;
+/// Maximum number of matches returned by `search_files`.
+pub const MAX_SEARCH_RESULTS: usize = 500;
 
-/// 文件系统工具共享上下文。
-///
-/// 三个工具（list/read/write）共用同一份运行上下文，
-/// 以便共享审批状态、审计日志和 call_id 映射队列。
+/// Prevent oversized tool outputs from bloating UI/model context.
+pub(crate) const MAX_TOOL_OUTPUT_CHARS: usize = 24_000;
+/// Approval timeout for mutating operations.
+const APPROVAL_TIMEOUT_SECS: u64 = 600;
+/// Preview diff max lines for approval payloads.
+const MAX_DIFF_PREVIEW_LINES: usize = 240;
+/// Optional extra allowed roots env variable.
+const FS_ALLOWED_ROOTS_ENV: &str = "YOUCLAW_FS_ALLOWED_ROOTS";
+/// Internal field injected at runtime to bind tool call id safely.
+pub(crate) const INTERNAL_TOOL_CALL_ID_FIELD: &str = "__youclaw_call_id";
+/// Tool-phase ignored directories to reduce noisy traversal.
+const TOOL_IGNORED_DIRS: [&str; 13] = [
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".cache",
+    "coverage",
+    "vendor",
+    "out",
+    "tmp",
+    ".idea",
+];
+/// Tool-phase ignored files to reduce noisy traversal.
+const TOOL_IGNORED_FILES: [&str; 4] = [".DS_Store", "Thumbs.db", ".env", ".env.local"];
+
+#[derive(Debug, Clone)]
+pub struct FileEdit {
+    pub old_text: String,
+    pub new_text: String,
+}
+
+/// Shared runtime context for filesystem tools.
 #[derive(Clone)]
 pub struct FilesystemToolContext {
-    /// 会话 ID，用于记录审计日志与事件。
+    /// Session id for audit/event correlation.
     pub session_id: String,
-    /// Turn ID，用于关联当前这轮对话执行流。
+    /// Turn id for audit/event correlation.
     pub turn_id: String,
-    /// 工作区根目录，相对路径统一基于该目录解析。
+    /// Workspace root; relative paths are resolved from this root.
     pub workspace_root: PathBuf,
-    /// 当前步骤序号（step），用于事件中标记执行进度。
+    /// Current step index used by timeline events.
     pub current_step: Arc<AtomicU8>,
-    /// 工具调用队列，用于将流式事件中的 call_id 绑定到实际工具执行。
-    pub tool_calls: Arc<Mutex<VecDeque<ToolCall>>>,
-    /// 运行取消令牌，用于审批等待期间快速中断。
+    /// Tool-call registry keyed by `call_id`, used for strong binding in tool executors.
+    pub tool_calls: Arc<Mutex<HashMap<String, ToolCall>>>,
+    /// Cancellation signal for approval waits.
     pub cancellation_token: CancellationToken,
-    /// 审批服务（写文件需要）。
+    /// Approval service used by mutating operations.
     pub approvals: ApprovalService,
-    /// 存储服务（审计日志、数据库写入）。
+    /// Session-scoped approval mode for filesystem mutations.
+    pub approval_mode: SessionApprovalMode,
+    /// Storage service for metrics/audit.
     pub storage: StorageService,
-    /// WebSocket 事件中心（向前端发工具事件）。
+    /// Websocket hub for tool events.
     pub hub: WsHub,
 }
 
 impl FilesystemToolContext {
-    /// 列出目录内容。
-    ///
-    /// - 相对路径基于 workspace_root
-    /// - 记录 turn 级别文件操作审计日志
-    pub fn list_dir(&self, tool_name: &str, input_path: &str) -> AppResult<Value> {
-        let resolved = resolve_path(input_path, &self.workspace_root)?;
-        let tool_call = self.claim_tool_call(tool_name, "list_dir", input_path);
-        let entries = fs::read_dir(&resolved)?
-            .map(|entry| {
-                let entry = entry?;
-                let metadata = entry.metadata()?;
-                Ok(json!({
-                    "name": entry.file_name().to_string_lossy().to_string(),
-                    "path": entry.path().to_string_lossy().to_string(),
-                    "is_dir": metadata.is_dir(),
-                    "size_bytes": if metadata.is_file() { Some(metadata.len()) } else { None },
-                }))
-            })
-            .collect::<Result<Vec<_>, std::io::Error>>()?;
-        self.storage.record_file_operation(
-            &self.session_id,
-            &self.turn_id,
-            Some(&tool_call.call_id),
-            "list_dir",
-            &resolved.to_string_lossy(),
-            "ok",
-            None,
-        )?;
-        Ok(json!({
-            "action": "list_dir",
-            "path": resolved.to_string_lossy(),
-            "entries": entries,
-        }))
-    }
-
-    /// 读取文件内容（按行切片）。
-    ///
-    /// - `offset` 为起始行偏移（0-based）
-    /// - `limit` 为最大返回行数，受 MAX_READ_LIMIT 约束
-    pub fn read_file(
+    /// List direct children of a directory.
+    pub fn list_directory(
         &self,
         tool_name: &str,
         input_path: &str,
-        offset: usize,
-        limit: usize,
+        tool_call_id: Option<&str>,
     ) -> AppResult<Value> {
-        if !(1..=MAX_READ_LIMIT).contains(&limit) {
-            return Err(AppError::Validation(format!(
-                "`limit` 必须位于 1..={MAX_READ_LIMIT}"
-            )));
-        }
-        let resolved = resolve_path(input_path, &self.workspace_root)?;
-        let tool_call = self.claim_tool_call(tool_name, "read_file", input_path);
-        let bytes = fs::read(&resolved)?;
-        let text = String::from_utf8_lossy(&bytes).to_string();
-        let lines = text.lines().collect::<Vec<_>>();
-        let start = offset.min(lines.len());
-        let end = start.saturating_add(limit).min(lines.len());
-        let content = lines[start..end]
-            .iter()
-            .enumerate()
-            .map(|(idx, line)| format!("{}\t{}", start + idx + 1, line))
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.storage.record_file_operation(
-            &self.session_id,
-            &self.turn_id,
-            Some(&tool_call.call_id),
-            "read_file",
-            &resolved.to_string_lossy(),
-            "ok",
-            None,
-        )?;
-        Ok(json!({
-            "action": "read_file",
-            "path": resolved.to_string_lossy(),
-            "line_start": start + 1,
-            "line_end": end,
-            "total_lines": lines.len(),
-            "content": truncate(&content, MAX_TOOL_OUTPUT_CHARS),
-        }))
+        super::list_directory::execute_list_directory(self, tool_name, input_path, tool_call_id)
     }
 
-    /// 写入文件（覆盖写），并通过审批流程保护写操作。
+    /// Read file as UTF-8 text. Supports optional `head` or `tail` line limits.
+    pub fn read_text_file(
+        &self,
+        tool_name: &str,
+        input_path: &str,
+        head: Option<usize>,
+        tail: Option<usize>,
+        tool_call_id: Option<&str>,
+    ) -> AppResult<Value> {
+        super::read_text_file::execute_read_text_file(
+            self,
+            tool_name,
+            input_path,
+            head,
+            tail,
+            tool_call_id,
+        )
+    }
+
+    /// Read multiple files in one tool call.
     ///
-    /// - 先生成 diff 预览并发起审批事件
-    /// - 审批通过后执行写入并记录审计日志
+    /// Per-file failures are included in the response and do not abort the batch.
+    pub fn read_files(
+        &self,
+        tool_name: &str,
+        paths: &[String],
+        tool_call_id: Option<&str>,
+    ) -> AppResult<Value> {
+        super::read_files::execute_read_files(self, tool_name, paths, tool_call_id)
+    }
+
+    /// Search files recursively from a root path using glob patterns.
+    pub fn search_files(
+        &self,
+        tool_name: &str,
+        input_path: &str,
+        pattern: &str,
+        exclude_patterns: &[String],
+        tool_call_id: Option<&str>,
+    ) -> AppResult<Value> {
+        super::search_files::execute_search_files(
+            self,
+            tool_name,
+            input_path,
+            pattern,
+            exclude_patterns,
+            tool_call_id,
+        )
+    }
+
+    /// Create or overwrite a file with approval protection.
+    ///
+    /// Memory files (`MEMORY.md` and `memory/*.md`) bypass approval.
     pub async fn write_file(
         &self,
         tool_name: &str,
         input_path: &str,
         content: &str,
+        tool_call_id: Option<&str>,
     ) -> AppResult<Value> {
-        let resolved = resolve_path(input_path, &self.workspace_root)?;
-        let tool_call = self.claim_tool_call(tool_name, "write_file", input_path);
-        let memory_rel =
-            resolve_relative_memory_path_from_absolute(&resolved, &self.workspace_root);
+        super::write_file::execute_write_file(self, tool_name, input_path, content, tool_call_id)
+            .await
+    }
 
-        if let Some(rel) = memory_rel {
-            if let Some(parent) = resolved.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&resolved, content.as_bytes())?;
-            self.storage.record_file_operation(
-                &self.session_id,
-                &self.turn_id,
-                Some(&tool_call.call_id),
-                "write_file",
-                &resolved.to_string_lossy(),
-                "ok",
-                Some(content.len()),
-            )?;
-            let manager =
-                BuiltinFtsMemoryManager::new(self.storage.clone(), self.workspace_root.clone());
-            let changed_paths = vec![rel.clone()];
-            let sync = manager.sync(false, Some(&changed_paths))?;
-            return Ok(json!({
-                "action": "write_file",
-                "path": resolved.to_string_lossy(),
-                "bytes_written": content.len(),
-                "approval_bypassed": true,
-                "memory_sync": sync,
-            }));
-        }
+    /// Apply ordered text edits and optionally write them back with approval.
+    pub async fn edit_file(
+        &self,
+        tool_name: &str,
+        input_path: &str,
+        edits: &[FileEdit],
+        dry_run: bool,
+        tool_call_id: Option<&str>,
+    ) -> AppResult<Value> {
+        super::edit_file::execute_edit_file(
+            self,
+            tool_name,
+            input_path,
+            edits,
+            dry_run,
+            tool_call_id,
+        )
+        .await
+    }
 
-        let previous = fs::read_to_string(&resolved).unwrap_or_default();
-        let preview_json = json!({
-            "path": resolved.to_string_lossy(),
-            "diff": build_diff_preview(&previous, content),
-            "old_excerpt": truncate(&previous, 4000),
-            "new_excerpt": truncate(content, 4000),
-        });
-        let approval = new_tool_approval(
-            self.session_id.clone(),
-            self.turn_id.clone(),
-            tool_call.call_id.clone(),
-            "write_file",
-            resolved.to_string_lossy().to_string(),
-            preview_json,
-        );
-        let receiver = self.approvals.register_pending(approval.clone())?;
-        self.hub.emit_turn_event(
-            &self.turn_id,
-            "chat.step.tool.requested",
-            ToolRequestedPayload {
-                session_id: self.session_id.clone(),
-                turn_id: self.turn_id.clone(),
-                step: self.current_step.load(Ordering::Relaxed),
-                state: "awaiting_approval".to_string(),
-                tool_call: tool_call.clone(),
-                approval: Some(approval.clone()),
-            },
-        )?;
+    pub fn should_skip_mutation_approval(&self) -> bool {
+        matches!(self.approval_mode, SessionApprovalMode::FullAccess)
+    }
 
-        let decision = match wait_for_approval(receiver, &self.cancellation_token).await {
-            Ok(value) => value,
-            Err(ApprovalWaitError::Cancelled) => {
-                let _ = self.approvals.mark_status(&approval.id, "cancelled");
-                return Err(AppError::Cancelled(
-                    "turn cancelled while waiting for approval".to_string(),
-                ));
-            }
-            Err(ApprovalWaitError::TimedOut) => {
-                let _ = self.approvals.mark_status(&approval.id, "timed_out");
-                return Err(AppError::Cancelled("approval timed out".to_string()));
-            }
-            Err(ApprovalWaitError::ChannelClosed) => {
-                let _ = self.approvals.mark_status(&approval.id, "cancelled");
-                return Err(AppError::Cancelled("approval channel closed".to_string()));
-            }
-        };
-        if !decision {
-            self.storage.record_file_operation(
-                &self.session_id,
-                &self.turn_id,
-                Some(&tool_call.call_id),
-                "write_file",
-                &resolved.to_string_lossy(),
-                "rejected",
-                None,
-            )?;
-            return Err(AppError::Cancelled(format!(
-                "write rejected for `{}`",
-                resolved.display()
+    /// 通过内部注入的 `call_id` 绑定本次工具执行对应的 `ToolCall`。
+    pub(crate) fn claim_tool_call(
+        &self,
+        tool_name: &str,
+        tool_call_id: Option<&str>,
+    ) -> AppResult<ToolCall> {
+        let tool_call_id = tool_call_id.ok_or_else(|| {
+            AppError::Agent(format!(
+                "missing internal `{INTERNAL_TOOL_CALL_ID_FIELD}` for tool `{tool_name}`"
+            ))
+        })?;
+
+        let mut registry = self
+            .tool_calls
+            .lock()
+            .map_err(|_| AppError::Agent("tool call registry lock poisoned".to_string()))?;
+        let call = registry.remove(tool_call_id).ok_or_else(|| {
+            AppError::Agent(format!(
+                "tool call binding not found: id=`{tool_call_id}`, tool=`{tool_name}`"
+            ))
+        })?;
+
+        if call.tool_name != tool_name {
+            return Err(AppError::Agent(format!(
+                "tool call binding mismatch: id=`{tool_call_id}`, expected=`{tool_name}`, actual=`{}`",
+                call.tool_name
             )));
         }
 
-        if let Some(parent) = resolved.parent() {
-            fs::create_dir_all(parent)?;
+        Ok(call)
+    }
+}
+
+/// 遍历/列举类工具使用的执行期忽略策略。
+///
+/// 规则：
+/// - 固定忽略常见噪音目录与文件；
+/// - 当目标路径位于工作区内时，附加应用工作区根 `.gitignore`。
+pub(crate) struct ToolIgnorePolicy {
+    workspace_root: PathBuf,
+    root_gitignore: Option<Gitignore>,
+}
+
+impl ToolIgnorePolicy {
+    /// 构建工具执行期忽略策略。
+    pub(crate) fn new(workspace_root: &Path) -> Self {
+        let normalized_root = normalize_path(workspace_root);
+        let root_gitignore = build_workspace_gitignore_matcher(workspace_root);
+        Self {
+            workspace_root: normalized_root,
+            root_gitignore,
         }
-        fs::write(&resolved, content.as_bytes())?;
-        self.storage.record_file_operation(
-            &self.session_id,
-            &self.turn_id,
-            Some(&tool_call.call_id),
-            "write_file",
-            &resolved.to_string_lossy(),
-            "ok",
-            Some(content.len()),
-        )?;
-        Ok(json!({
-            "action": "write_file",
-            "path": resolved.to_string_lossy(),
-            "bytes_written": content.len(),
-        }))
     }
 
-    /// 从 ToolCall 队列中获取当前调用信息。
-    ///
-    /// 因为工具执行函数拿不到 call_id，运行时会在事件流中
-    /// 先把 ToolCall 压队列，再由这里按顺序弹出绑定。
-    fn claim_tool_call(&self, tool_name: &str, action: &str, input_path: &str) -> ToolCall {
-        if let Ok(mut queue) = self.tool_calls.lock() {
-            if let Some(call) = queue.pop_front() {
-                return call;
+    /// 判断目标路径在工具执行阶段是否应被忽略。
+    pub(crate) fn should_ignore_path(&self, path: &Path, is_dir: bool) -> bool {
+        let normalized_path = normalize_path(path);
+        let relative = normalized_path
+            .strip_prefix(&self.workspace_root)
+            .ok()
+            .map(Path::to_path_buf);
+        let subject = relative.as_deref().unwrap_or(normalized_path.as_path());
+
+        if contains_tool_ignored_dirs(subject) {
+            return true;
+        }
+
+        if let Some(file_name) = subject.file_name().and_then(|name| name.to_str()) {
+            if TOOL_IGNORED_FILES.contains(&file_name) {
+                return true;
             }
         }
-        ToolCall {
-            call_id: format!("fallback-{action}-{}", input_path),
-            tool_name: tool_name.to_string(),
-            args_json: json!({ "path": input_path }),
+
+        if let (Some(rel), Some(matcher)) = (relative.as_deref(), &self.root_gitignore) {
+            if matcher.matched_path_or_any_parents(rel, is_dir).is_ignore() {
+                return true;
+            }
         }
+
+        false
     }
 }
 
-/// 将输入路径解析成绝对路径。
-///
-/// - 绝对路径：原样使用
-/// - 相对路径：拼接到 workspace_root
-/// - 最后统一做规范化，去掉 `.` / `..`
-fn resolve_path(input_path: &str, workspace_root: &Path) -> AppResult<PathBuf> {
-    let path = Path::new(input_path);
-    let joined = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        workspace_root.join(path)
-    };
-    Ok(normalize_path(&joined))
+/// 读取文本文件；文件不存在时返回空字符串而非报错。
+pub(crate) fn read_text_if_exists(path: &Path) -> AppResult<String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(err) => Err(err.into()),
+    }
 }
 
-/// 归一化路径中的 `.` / `..` 片段。
+/// 以“临时文件 + rename”方式原子写入文本内容。
+pub(crate) fn write_file_content_atomic(path: &Path, content: &str) -> AppResult<()> {
+    let parent = path.parent().ok_or_else(|| {
+        AppError::Validation(format!(
+            "cannot write file without parent directory: `{}`",
+            path.display()
+        ))
+    })?;
+
+    if !parent.exists() {
+        return Err(AppError::Validation(format!(
+            "Parent directory does not exist: {}",
+            parent.display()
+        )));
+    }
+
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            file.write_all(content.as_bytes())?;
+            return Ok(());
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    let temp_path = path.with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4()));
+
+    match fs::File::create(&temp_path).and_then(|mut file| file.write_all(content.as_bytes())) {
+        Ok(()) => {}
+        Err(err) => {
+            let _ = fs::remove_file(&temp_path);
+            return Err(err.into());
+        }
+    }
+
+    if let Err(err) = fs::rename(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err.into());
+    }
+
+    Ok(())
+}
+
+/// 生成写入/编辑审批预览内容。
+pub(crate) fn build_mutation_preview(path: &Path, previous: &str, next: &str) -> Value {
+    json!({
+        "path": path.to_string_lossy(),
+        "diff": build_diff_preview(previous, next),
+        "old_excerpt": truncate(previous, 4000),
+        "new_excerpt": truncate(next, 4000),
+    })
+}
+
+/// 在允许根目录集合中解析并校验请求路径。
 ///
-/// 这里不做权限判断，仅做语义归一化；
-/// 具体可写范围由上层 workspace / 审批策略控制。
+/// 安全保证：
+/// - 阻止路径穿越到允许目录之外；
+/// - 阻止已存在路径通过符号链接逃逸；
+/// - 对不存在目标，校验其父目录是否仍在允许范围内。
+pub(crate) fn validate_path(requested_path: &str, workspace_root: &Path) -> AppResult<PathBuf> {
+    let trimmed = requested_path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Validation("path cannot be empty".to_string()));
+    }
+    if trimmed.contains('\0') {
+        return Err(AppError::Validation("path contains null byte".to_string()));
+    }
+
+    let allowed_dirs = resolve_allowed_directories(workspace_root);
+    let expanded = expand_home_path(trimmed);
+
+    let absolute = if expanded.is_absolute() {
+        normalize_path(&expanded)
+    } else {
+        resolve_relative_path_against_allowed_directories(&expanded, &allowed_dirs)
+    };
+
+    if !is_path_within_allowed_dirs(&absolute, &allowed_dirs) {
+        return Err(AppError::Validation(format!(
+            "access denied - path outside allowed directories: {} not in {}",
+            absolute.display(),
+            format_allowed_dirs(&allowed_dirs)
+        )));
+    }
+
+    match fs::canonicalize(&absolute) {
+        Ok(real_path) => {
+            let normalized_real = normalize_path(&real_path);
+            if !is_path_within_allowed_dirs(&normalized_real, &allowed_dirs) {
+                return Err(AppError::Validation(format!(
+                    "access denied - symlink target outside allowed directories: {} not in {}",
+                    normalized_real.display(),
+                    format_allowed_dirs(&allowed_dirs)
+                )));
+            }
+            Ok(normalized_real)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let parent_dir = absolute.parent().ok_or_else(|| {
+                AppError::Validation(format!(
+                    "invalid path without parent: {}",
+                    absolute.display()
+                ))
+            })?;
+
+            let real_parent = fs::canonicalize(parent_dir).map_err(|_| {
+                AppError::Validation(format!(
+                    "Parent directory does not exist: {}",
+                    parent_dir.display()
+                ))
+            })?;
+            let normalized_parent = normalize_path(&real_parent);
+
+            if !is_path_within_allowed_dirs(&normalized_parent, &allowed_dirs) {
+                return Err(AppError::Validation(format!(
+                    "access denied - parent directory outside allowed directories: {} not in {}",
+                    normalized_parent.display(),
+                    format_allowed_dirs(&allowed_dirs)
+                )));
+            }
+
+            Ok(absolute)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// 解析工具允许访问的根目录集合（含环境变量扩展）。
+pub(crate) fn resolve_allowed_directories(workspace_root: &Path) -> Vec<PathBuf> {
+    let mut dedup = HashSet::<String>::new();
+    let mut roots = Vec::<PathBuf>::new();
+
+    push_root_variants(workspace_root, &mut roots, &mut dedup);
+
+    if let Ok(raw) = std::env::var(FS_ALLOWED_ROOTS_ENV) {
+        for value in raw
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            let expanded = expand_home_path(value);
+            push_root_variants(&expanded, &mut roots, &mut dedup);
+        }
+    }
+
+    if roots.is_empty() {
+        roots.push(normalize_path(workspace_root));
+    }
+
+    roots
+}
+
+fn push_root_variants(root: &Path, roots: &mut Vec<PathBuf>, dedup: &mut HashSet<String>) {
+    let absolute = if root.is_absolute() {
+        normalize_path(root)
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        normalize_path(&cwd.join(root))
+    };
+    push_unique_path(absolute.clone(), roots, dedup);
+
+    if let Ok(real) = fs::canonicalize(&absolute) {
+        push_unique_path(normalize_path(&real), roots, dedup);
+    }
+}
+
+fn push_unique_path(path: PathBuf, roots: &mut Vec<PathBuf>, dedup: &mut HashSet<String>) {
+    let key = path.to_string_lossy().to_string();
+    if dedup.insert(key) {
+        roots.push(path);
+    }
+}
+
+fn expand_home_path(raw_path: &str) -> PathBuf {
+    if raw_path == "~" || raw_path.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            if raw_path == "~" {
+                return home;
+            }
+            return home.join(raw_path.trim_start_matches("~/"));
+        }
+    }
+    PathBuf::from(raw_path)
+}
+
+fn resolve_relative_path_against_allowed_directories(
+    relative_path: &Path,
+    allowed_directories: &[PathBuf],
+) -> PathBuf {
+    if allowed_directories.is_empty() {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        return normalize_path(&cwd.join(relative_path));
+    }
+
+    for allowed_dir in allowed_directories {
+        let candidate = normalize_path(&allowed_dir.join(relative_path));
+        if is_path_within_allowed_dirs(&candidate, allowed_directories) {
+            return candidate;
+        }
+    }
+
+    normalize_path(&allowed_directories[0].join(relative_path))
+}
+
+/// 判断路径是否位于允许目录集合之内。
+pub(crate) fn is_path_within_allowed_dirs(path: &Path, allowed_directories: &[PathBuf]) -> bool {
+    let normalized_path = normalize_path(path);
+    allowed_directories.iter().any(|allowed_dir| {
+        let normalized_dir = normalize_path(allowed_dir);
+        normalized_path == normalized_dir || normalized_path.starts_with(&normalized_dir)
+    })
+}
+
+fn format_allowed_dirs(allowed_dirs: &[PathBuf]) -> String {
+    allowed_dirs
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn build_workspace_gitignore_matcher(workspace_root: &Path) -> Option<Gitignore> {
+    let mut builder = GitignoreBuilder::new(workspace_root);
+    let gitignore_path = workspace_root.join(".gitignore");
+    if gitignore_path.is_file() {
+        let _ = builder.add(gitignore_path);
+    }
+    builder.build().ok()
+}
+
+fn contains_tool_ignored_dirs(path: &Path) -> bool {
+    path.components().any(|component| {
+        if let Component::Normal(value) = component {
+            let segment = value.to_string_lossy();
+            TOOL_IGNORED_DIRS.contains(&segment.as_ref())
+        } else {
+            false
+        }
+    })
+}
+
+/// Normalize lexical `.` and `..` components.
 fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -320,10 +553,8 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
-/// 对长文本做截断，避免工具输出过大。
-///
-/// 按字符数截断而非字节数，避免多字节字符被切断。
-fn truncate(text: &str, limit: usize) -> String {
+/// 按字符数裁剪文本，防止单次工具输出过大。
+pub(crate) fn truncate(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
     }
@@ -332,34 +563,253 @@ fn truncate(text: &str, limit: usize) -> String {
     out
 }
 
-/// 生成可读 diff 预览，供写文件审批弹窗展示。
-///
-/// 只保留前 240 行变化，保证审批弹窗可读且性能稳定。
 fn build_diff_preview(previous: &str, next: &str) -> String {
     let diff = TextDiff::from_lines(previous, next);
     let mut lines = Vec::new();
-    for change in diff.iter_all_changes().take(240) {
+
+    for (index, change) in diff.iter_all_changes().enumerate() {
+        if index >= MAX_DIFF_PREVIEW_LINES {
+            lines.push("... [diff truncated]".to_string());
+            break;
+        }
         let sign = match change.tag() {
             ChangeTag::Delete => '-',
             ChangeTag::Insert => '+',
             ChangeTag::Equal => ' ',
         };
-        let line = format!("{sign} {}", change.to_string().trim_end_matches('\n'));
-        lines.push(line);
+        lines.push(format!(
+            "{sign} {}",
+            change.to_string().trim_end_matches('\n')
+        ));
     }
-    if diff.iter_all_changes().count() > 240 {
-        lines.push("... [diff truncated]".to_string());
-    }
+
     lines.join("\n")
 }
 
-/// 等待审批结果，支持超时与取消信号。
-///
-/// 返回值：
-/// - `Ok(true)`：审批通过
-/// - `Ok(false)`：审批拒绝
-/// - `Err(...)`：超时/取消/通道关闭
-async fn wait_for_approval(
+/// 生成统一 diff 文本，供 `edit_file` 预览/返回使用。
+pub(crate) fn create_unified_diff(previous: &str, next: &str, file_path: &Path) -> String {
+    let normalized_previous = normalize_line_endings(previous);
+    let normalized_next = normalize_line_endings(next);
+    let diff = TextDiff::from_lines(&normalized_previous, &normalized_next);
+
+    let mut output = String::new();
+    let path = file_path.to_string_lossy();
+    output.push_str(&format!("--- {path}\n"));
+    output.push_str(&format!("+++ {path}\n"));
+
+    for change in diff.iter_all_changes() {
+        let sign = match change.tag() {
+            ChangeTag::Delete => '-',
+            ChangeTag::Insert => '+',
+            ChangeTag::Equal => ' ',
+        };
+        output.push(sign);
+        output.push_str(&change.to_string());
+    }
+
+    output
+}
+
+fn normalize_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+/// 读取前 N 行文本。
+pub(crate) fn head_lines(text: &str, num_lines: usize) -> String {
+    if num_lines == 0 {
+        return String::new();
+    }
+    text.lines().take(num_lines).collect::<Vec<_>>().join("\n")
+}
+
+/// 读取后 N 行文本。
+pub(crate) fn tail_lines(text: &str, num_lines: usize) -> String {
+    if num_lines == 0 {
+        return String::new();
+    }
+    let lines = text.lines().collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(num_lines);
+    lines[start..].join("\n")
+}
+
+fn leading_whitespace(value: &str) -> &str {
+    let end = value
+        .char_indices()
+        .find(|(_, ch)| !ch.is_whitespace())
+        .map(|(index, _)| index)
+        .unwrap_or(value.len());
+    &value[..end]
+}
+
+/// 依序应用文本替换编辑。
+pub(crate) fn apply_ordered_edits(content: &str, edits: &[FileEdit]) -> AppResult<String> {
+    let mut modified_content = normalize_line_endings(content);
+
+    for edit in edits {
+        if edit.old_text.is_empty() {
+            return Err(AppError::Validation(
+                "`old_text` cannot be empty".to_string(),
+            ));
+        }
+
+        let normalized_old = normalize_line_endings(&edit.old_text);
+        let normalized_new = normalize_line_endings(&edit.new_text);
+
+        if modified_content.contains(&normalized_old) {
+            modified_content = modified_content.replacen(&normalized_old, &normalized_new, 1);
+            continue;
+        }
+
+        let old_lines = normalized_old.split('\n').collect::<Vec<_>>();
+        let mut content_lines = modified_content
+            .split('\n')
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+
+        if old_lines.len() > content_lines.len() {
+            return Err(AppError::Validation(format!(
+                "Could not find exact match for edit:\n{}",
+                edit.old_text
+            )));
+        }
+
+        let mut match_index = None;
+        for index in 0..=(content_lines.len() - old_lines.len()) {
+            let is_match = old_lines.iter().enumerate().all(|(line_index, old_line)| {
+                let current_line = content_lines
+                    .get(index + line_index)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                old_line.trim() == current_line.trim()
+            });
+            if is_match {
+                match_index = Some(index);
+                break;
+            }
+        }
+
+        let Some(index) = match_index else {
+            return Err(AppError::Validation(format!(
+                "Could not find exact match for edit:\n{}",
+                edit.old_text
+            )));
+        };
+
+        let original_indent = content_lines
+            .get(index)
+            .map(String::as_str)
+            .map(leading_whitespace)
+            .unwrap_or("")
+            .to_string();
+
+        let new_lines = normalized_new
+            .split('\n')
+            .enumerate()
+            .map(|(line_index, line)| {
+                if line_index == 0 {
+                    return format!("{original_indent}{}", line.trim_start());
+                }
+
+                let old_indent = old_lines
+                    .get(line_index)
+                    .map(|value| leading_whitespace(value))
+                    .unwrap_or("");
+                let new_indent = leading_whitespace(line);
+
+                if !old_indent.is_empty() && !new_indent.is_empty() {
+                    let relative_indent =
+                        (new_indent.len() as isize - old_indent.len() as isize).max(0) as usize;
+                    return format!(
+                        "{original_indent}{}{trimmed}",
+                        " ".repeat(relative_indent),
+                        trimmed = line.trim_start()
+                    );
+                }
+
+                line.to_string()
+            })
+            .collect::<Vec<_>>();
+
+        content_lines.splice(index..index + old_lines.len(), new_lines);
+        modified_content = content_lines.join("\n");
+    }
+
+    Ok(modified_content)
+}
+
+/// 递归搜索目录并按 glob 规则聚合匹配结果。
+pub(crate) fn search_directory_recursive(
+    current_path: &Path,
+    root_path: &Path,
+    allowed_dirs: &[PathBuf],
+    ignore_policy: &ToolIgnorePolicy,
+    include_pattern: &Pattern,
+    exclude_patterns: &[Pattern],
+    results: &mut Vec<String>,
+    filtered_ignored_paths: &mut usize,
+) -> AppResult<()> {
+    let entries = fs::read_dir(current_path)?;
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !is_path_within_allowed_dirs(&path, allowed_dirs) {
+            continue;
+        }
+
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let is_dir = file_type.is_dir();
+        if ignore_policy.should_ignore_path(&path, is_dir) {
+            *filtered_ignored_paths += 1;
+            continue;
+        }
+
+        let relative = path
+            .strip_prefix(root_path)
+            .unwrap_or(path.as_path())
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let excluded = exclude_patterns
+            .iter()
+            .any(|pattern| pattern.matches(&relative));
+        if excluded {
+            continue;
+        }
+
+        if include_pattern.matches(&relative) {
+            results.push(path.to_string_lossy().to_string());
+            if results.len() >= MAX_SEARCH_RESULTS {
+                return Ok(());
+            }
+        }
+
+        if is_dir {
+            search_directory_recursive(
+                &path,
+                root_path,
+                allowed_dirs,
+                ignore_policy,
+                include_pattern,
+                exclude_patterns,
+                results,
+                filtered_ignored_paths,
+            )?;
+            if results.len() >= MAX_SEARCH_RESULTS {
+                return Ok(());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 等待人工审批结果，支持取消与超时。
+pub(crate) async fn wait_for_approval(
     receiver: oneshot::Receiver<bool>,
     cancellation_token: &CancellationToken,
 ) -> Result<bool, ApprovalWaitError> {
@@ -375,7 +825,48 @@ async fn wait_for_approval(
     }
 }
 
-enum ApprovalWaitError {
+/// 注册审批请求并等待审批结果。
+pub(crate) async fn await_approval(
+    context: &FilesystemToolContext,
+    tool_call: &ToolCall,
+    approval: &ToolApproval,
+) -> AppResult<bool> {
+    let receiver = context.approvals.register_pending(approval.clone())?;
+
+    context.hub.emit_turn_event(
+        &context.turn_id,
+        "chat.step.tool.requested",
+        ToolRequestedPayload {
+            session_id: context.session_id.clone(),
+            turn_id: context.turn_id.clone(),
+            step: context.current_step.load(Ordering::Relaxed),
+            state: "awaiting_approval".to_string(),
+            tool_call: tool_call.clone(),
+            approval: Some(approval.clone()),
+        },
+    )?;
+
+    match wait_for_approval(receiver, &context.cancellation_token).await {
+        Ok(value) => Ok(value),
+        Err(ApprovalWaitError::Cancelled) => {
+            let _ = context.approvals.mark_status(&approval.id, "cancelled");
+            Err(AppError::Cancelled(
+                "turn cancelled while waiting for approval".to_string(),
+            ))
+        }
+        Err(ApprovalWaitError::TimedOut) => {
+            let _ = context.approvals.mark_status(&approval.id, "timed_out");
+            Err(AppError::Cancelled("approval timed out".to_string()))
+        }
+        Err(ApprovalWaitError::ChannelClosed) => {
+            let _ = context.approvals.mark_status(&approval.id, "cancelled");
+            Err(AppError::Cancelled("approval channel closed".to_string()))
+        }
+    }
+}
+
+/// 人工审批等待阶段的错误类型。
+pub(crate) enum ApprovalWaitError {
     Cancelled,
     TimedOut,
     ChannelClosed,
@@ -383,13 +874,76 @@ enum ApprovalWaitError {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_diff_preview, resolve_path};
+    use super::{
+        apply_ordered_edits, build_diff_preview, validate_path, FileEdit, FilesystemToolContext,
+    };
+    use crate::backend::models::SessionApprovalMode;
     use crate::backend::{ApprovalService, StorageService, WsHub};
-    use std::path::Path;
+    use aquaregia::ToolCall;
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
     use std::sync::atomic::AtomicU8;
     use std::sync::{Arc, Mutex};
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
+    use tokio::time::{sleep, Duration, Instant};
     use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
+
+    fn build_test_context(dir: &TempDir) -> (FilesystemToolContext, StorageService, PathBuf) {
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+        let workspace_root = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).expect("workspace");
+        std::fs::create_dir_all(workspace_root.join("memory")).expect("memory dir");
+
+        let context = FilesystemToolContext {
+            session_id: "session-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            workspace_root: workspace_root.clone(),
+            current_step: Arc::new(AtomicU8::new(1)),
+            tool_calls: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            cancellation_token: CancellationToken::new(),
+            approvals: ApprovalService::new(storage.clone()),
+            approval_mode: SessionApprovalMode::Default,
+            storage: storage.clone(),
+            hub: WsHub::new(),
+        };
+
+        (context, storage, workspace_root)
+    }
+
+    fn register_tool_call(
+        context: &FilesystemToolContext,
+        tool_name: &str,
+        args_json: Value,
+    ) -> String {
+        let call_id = format!("test-{}", Uuid::new_v4());
+        let call = ToolCall {
+            call_id: call_id.clone(),
+            tool_name: tool_name.to_string(),
+            args_json,
+        };
+        let mut registry = context.tool_calls.lock().expect("tool call lock");
+        registry.insert(call_id.clone(), call);
+        call_id
+    }
+
+    async fn wait_for_pending_approval(storage: &StorageService, action: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let approvals = storage.list_approvals().expect("list approvals");
+            if let Some(approval) = approvals
+                .into_iter()
+                .find(|item| item.status == "pending" && item.action == action)
+            {
+                return approval.id;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "pending approval not found for {action}"
+            );
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
 
     #[test]
     fn diff_preview_marks_insertions() {
@@ -398,45 +952,569 @@ mod tests {
     }
 
     #[test]
-    fn relative_paths_resolve_without_error() {
-        let workspace_root = Path::new("/tmp/youclaw-workspace");
-        let path = resolve_path("Desktop/example.txt", workspace_root).expect("resolved path");
-        assert!(path.is_absolute());
-        assert!(path.starts_with(workspace_root));
+    fn validate_path_denies_relative_traversal_outside_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let workspace_root = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).expect("workspace");
+
+        let resolved = validate_path("../outside.txt", &workspace_root);
+        assert!(resolved.is_err());
+        assert!(resolved
+            .err()
+            .map(|value| value.message())
+            .unwrap_or_default()
+            .contains("outside allowed directories"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_path_denies_symlink_target_outside_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().expect("tempdir");
+        let workspace_root = dir.path().join("workspace");
+        let outside_root = dir.path().join("outside");
+        std::fs::create_dir_all(&workspace_root).expect("workspace");
+        std::fs::create_dir_all(&outside_root).expect("outside");
+        std::fs::write(outside_root.join("secret.txt"), "secret").expect("write outside");
+
+        let linked_path = workspace_root.join("linked.txt");
+        symlink(outside_root.join("secret.txt"), &linked_path).expect("symlink");
+
+        let resolved = validate_path("linked.txt", &workspace_root);
+        assert!(resolved.is_err());
+        assert!(resolved
+            .err()
+            .map(|value| value.message())
+            .unwrap_or_default()
+            .contains("symlink target outside allowed directories"));
     }
 
     #[test]
-    fn absolute_paths_are_preserved() {
-        let workspace_root = Path::new("/tmp/youclaw-workspace");
-        let absolute = Path::new("/tmp/absolute/example.txt");
-        let path = resolve_path(absolute.to_string_lossy().as_ref(), workspace_root)
-            .expect("resolved path");
-        assert_eq!(path, absolute);
+    fn apply_ordered_edits_replaces_in_order() {
+        let original = "line1\nline2\nline3\n";
+        let edits = vec![
+            FileEdit {
+                old_text: "line1".to_string(),
+                new_text: "line1-updated".to_string(),
+            },
+            FileEdit {
+                old_text: "line3".to_string(),
+                new_text: "line3-updated".to_string(),
+            },
+        ];
+
+        let next = apply_ordered_edits(original, &edits).expect("apply edits");
+        assert_eq!(next, "line1-updated\nline2\nline3-updated\n");
+    }
+
+    #[test]
+    fn claim_tool_call_requires_internal_id() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, _workspace_root) = build_test_context(&dir);
+
+        let result = context.claim_tool_call("list_directory", None);
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .map(|value| value.message())
+            .unwrap_or_default()
+            .contains("missing internal"));
+    }
+
+    #[test]
+    fn claim_tool_call_rejects_tool_name_mismatch() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, _workspace_root) = build_test_context(&dir);
+        let tool_call_id = register_tool_call(
+            &context,
+            "read_files",
+            json!({
+                "paths": ["README.md"],
+            }),
+        );
+
+        let result = context.claim_tool_call("list_directory", Some(tool_call_id.as_str()));
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .map(|value| value.message())
+            .unwrap_or_default()
+            .contains("binding mismatch"));
+    }
+
+    #[test]
+    fn list_directory_formats_sorted_entries() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        std::fs::create_dir_all(workspace_root.join("a-dir")).expect("dir");
+        std::fs::write(workspace_root.join("b-file.txt"), "b").expect("file");
+        let tool_call_id = register_tool_call(
+            &context,
+            "list_directory",
+            json!({
+                "path": ".",
+            }),
+        );
+
+        let payload = context
+            .list_directory("list_directory", ".", Some(tool_call_id.as_str()))
+            .expect("list directory");
+        let formatted = payload
+            .get("formatted")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+
+        assert!(formatted.contains("[DIR] a-dir"));
+        assert!(formatted.contains("[FILE] b-file.txt"));
+
+        let dir_index = formatted.find("[DIR] a-dir").unwrap_or(usize::MAX);
+        let file_index = formatted.find("[FILE] b-file.txt").unwrap_or(0);
+        assert!(dir_index < file_index);
+    }
+
+    #[test]
+    fn list_directory_ignores_common_noise_dirs() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        std::fs::create_dir_all(workspace_root.join("node_modules")).expect("node_modules");
+        std::fs::create_dir_all(workspace_root.join("src")).expect("src");
+        let tool_call_id = register_tool_call(
+            &context,
+            "list_directory",
+            json!({
+                "path": ".",
+            }),
+        );
+
+        let payload = context
+            .list_directory("list_directory", ".", Some(tool_call_id.as_str()))
+            .expect("list directory");
+        let entries = payload
+            .get("entries")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let names = entries
+            .into_iter()
+            .filter_map(|value| {
+                value
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .map(ToOwned::to_owned)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"src".to_string()));
+        assert!(!names.contains(&"node_modules".to_string()));
+        assert_eq!(
+            payload
+                .get("filtered_ignored_entries")
+                .and_then(|value| value.as_u64()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn read_text_file_supports_head_tail_and_rejects_conflict() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        std::fs::write(workspace_root.join("notes.txt"), "line1\nline2\nline3\n").expect("write");
+        let head_call_id = register_tool_call(
+            &context,
+            "read_text_file",
+            json!({
+                "path": "notes.txt",
+                "head": 2,
+                "tail": Value::Null,
+            }),
+        );
+        let tail_call_id = register_tool_call(
+            &context,
+            "read_text_file",
+            json!({
+                "path": "notes.txt",
+                "head": Value::Null,
+                "tail": 2,
+            }),
+        );
+        let conflict_call_id = register_tool_call(
+            &context,
+            "read_text_file",
+            json!({
+                "path": "notes.txt",
+                "head": 1,
+                "tail": 1,
+            }),
+        );
+
+        let head = context
+            .read_text_file(
+                "read_text_file",
+                "notes.txt",
+                Some(2),
+                None,
+                Some(head_call_id.as_str()),
+            )
+            .expect("head");
+        assert_eq!(
+            head.get("content").and_then(|value| value.as_str()),
+            Some("line1\nline2")
+        );
+
+        let tail = context
+            .read_text_file(
+                "read_text_file",
+                "notes.txt",
+                None,
+                Some(2),
+                Some(tail_call_id.as_str()),
+            )
+            .expect("tail");
+        assert_eq!(
+            tail.get("content").and_then(|value| value.as_str()),
+            Some("line2\nline3")
+        );
+
+        let conflict = context.read_text_file(
+            "read_text_file",
+            "notes.txt",
+            Some(1),
+            Some(1),
+            Some(conflict_call_id.as_str()),
+        );
+        assert!(conflict.is_err());
+        assert!(conflict
+            .err()
+            .map(|value| value.message())
+            .unwrap_or_default()
+            .contains("cannot set both `head` and `tail`"));
+    }
+
+    #[test]
+    fn read_files_inlines_errors_and_keeps_order() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        std::fs::write(workspace_root.join("f1.txt"), "one").expect("f1");
+        std::fs::write(workspace_root.join("f2.txt"), "two").expect("f2");
+        let tool_call_id = register_tool_call(
+            &context,
+            "read_files",
+            json!({
+                "paths": [
+                    "f1.txt",
+                    "missing.txt",
+                    "f2.txt",
+                ],
+            }),
+        );
+
+        let payload = context
+            .read_files(
+                "read_files",
+                &[
+                    "f1.txt".to_string(),
+                    "missing.txt".to_string(),
+                    "f2.txt".to_string(),
+                ],
+                Some(tool_call_id.as_str()),
+            )
+            .expect("read files");
+
+        let merged = payload
+            .get("merged")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert!(merged.contains("f1.txt:\none"));
+        assert!(merged.contains("missing.txt: Error -"));
+        assert!(merged.contains("f2.txt:\ntwo"));
+    }
+
+    #[test]
+    fn search_files_honors_glob_and_excludes() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        std::fs::create_dir_all(workspace_root.join("src")).expect("src");
+        std::fs::create_dir_all(workspace_root.join("target")).expect("target");
+        std::fs::write(workspace_root.join("src/lib.rs"), "lib").expect("src file");
+        std::fs::write(workspace_root.join("target/skip.rs"), "skip").expect("target file");
+        let tool_call_id = register_tool_call(
+            &context,
+            "search_files",
+            json!({
+                "path": ".",
+                "pattern": "**/*.rs",
+                "exclude_patterns": ["target/**"],
+            }),
+        );
+
+        let payload = context
+            .search_files(
+                "search_files",
+                ".",
+                "**/*.rs",
+                &["target/**".to_string()],
+                Some(tool_call_id.as_str()),
+            )
+            .expect("search");
+
+        let matches = payload
+            .get("matches")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+
+        assert!(matches
+            .iter()
+            .any(|path| path.ends_with("src/lib.rs") || path.ends_with("src\\lib.rs")));
+        assert!(!matches
+            .iter()
+            .any(|path| path.ends_with("target/skip.rs") || path.ends_with("target\\skip.rs")));
+    }
+
+    #[test]
+    fn search_files_ignores_common_dirs_and_gitignore_in_tool_phase() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        std::fs::create_dir_all(workspace_root.join("src")).expect("src");
+        std::fs::create_dir_all(workspace_root.join("node_modules/pkg")).expect("node_modules");
+        std::fs::create_dir_all(workspace_root.join("dist")).expect("dist");
+        std::fs::write(workspace_root.join(".gitignore"), "dist/\n").expect("gitignore");
+        std::fs::write(workspace_root.join("src/keep.rs"), "keep").expect("keep");
+        std::fs::write(workspace_root.join("node_modules/pkg/skip.rs"), "skip").expect("skip");
+        std::fs::write(workspace_root.join("dist/generated.rs"), "generated").expect("generated");
+        let tool_call_id = register_tool_call(
+            &context,
+            "search_files",
+            json!({
+                "path": ".",
+                "pattern": "**/*.rs",
+                "exclude_patterns": [],
+            }),
+        );
+
+        let payload = context
+            .search_files(
+                "search_files",
+                ".",
+                "**/*.rs",
+                &[],
+                Some(tool_call_id.as_str()),
+            )
+            .expect("search");
+        let matches = payload
+            .get("matches")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+
+        assert!(matches
+            .iter()
+            .any(|path| path.ends_with("src/keep.rs") || path.ends_with("src\\keep.rs")));
+        assert!(!matches.iter().any(|path| path.contains("node_modules")));
+        assert!(!matches
+            .iter()
+            .any(|path| path.contains("/dist/") || path.contains("\\dist\\")));
+        assert!(
+            payload
+                .get("filtered_ignored_paths")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0)
+                >= 2
+        );
+    }
+
+    #[tokio::test]
+    async fn write_file_fails_when_parent_missing() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, _workspace_root) = build_test_context(&dir);
+        let tool_call_id = register_tool_call(
+            &context,
+            "write_file",
+            json!({
+                "path": "missing/new.txt",
+            }),
+        );
+
+        let result = context
+            .write_file(
+                "write_file",
+                "missing/new.txt",
+                "hello",
+                Some(tool_call_id.as_str()),
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .map(|value| value.message())
+            .unwrap_or_default()
+            .contains("Parent directory does not exist"));
+    }
+
+    #[tokio::test]
+    async fn write_file_waits_for_approval_and_applies_after_approve() {
+        let dir = tempdir().expect("tempdir");
+        let (context, storage, workspace_root) = build_test_context(&dir);
+        let target = workspace_root.join("notes.txt");
+        std::fs::write(&target, "before").expect("seed");
+        let tool_call_id = register_tool_call(
+            &context,
+            "write_file",
+            json!({
+                "path": "notes.txt",
+            }),
+        );
+
+        let task_context = context.clone();
+        let task_tool_call_id = tool_call_id.clone();
+        let handle = tokio::spawn(async move {
+            task_context
+                .write_file(
+                    "write_file",
+                    "notes.txt",
+                    "after",
+                    Some(task_tool_call_id.as_str()),
+                )
+                .await
+        });
+
+        let approval_id = wait_for_pending_approval(&storage, "write_file").await;
+        context
+            .approvals
+            .resolve(&approval_id, true)
+            .expect("approve write");
+
+        let payload = handle.await.expect("join").expect("write after approve");
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read target"),
+            "after"
+        );
+        assert_eq!(
+            payload
+                .get("approval_bypassed")
+                .and_then(|value| value.as_bool()),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_dry_run_does_not_write() {
+        let dir = tempdir().expect("tempdir");
+        let (context, _storage, workspace_root) = build_test_context(&dir);
+        let target = workspace_root.join("edit.txt");
+        std::fs::write(&target, "alpha\nbeta\n").expect("seed");
+        let tool_call_id = register_tool_call(
+            &context,
+            "edit_file",
+            json!({
+                "path": "edit.txt",
+                "edit_count": 1,
+                "dry_run": true,
+            }),
+        );
+
+        let payload = context
+            .edit_file(
+                "edit_file",
+                "edit.txt",
+                &[FileEdit {
+                    old_text: "alpha".to_string(),
+                    new_text: "alpha-updated".to_string(),
+                }],
+                true,
+                Some(tool_call_id.as_str()),
+            )
+            .await
+            .expect("dry run");
+
+        assert_eq!(
+            payload.get("dry_run").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert!(payload
+            .get("diff")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .contains("---"));
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read"),
+            "alpha\nbeta\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_rejected_keeps_original_content() {
+        let dir = tempdir().expect("tempdir");
+        let (context, storage, workspace_root) = build_test_context(&dir);
+        let target = workspace_root.join("edit-reject.txt");
+        std::fs::write(&target, "before\n").expect("seed");
+        let tool_call_id = register_tool_call(
+            &context,
+            "edit_file",
+            json!({
+                "path": "edit-reject.txt",
+                "edit_count": 1,
+                "dry_run": false,
+            }),
+        );
+
+        let task_context = context.clone();
+        let task_tool_call_id = tool_call_id.clone();
+        let handle = tokio::spawn(async move {
+            task_context
+                .edit_file(
+                    "edit_file",
+                    "edit-reject.txt",
+                    &[FileEdit {
+                        old_text: "before".to_string(),
+                        new_text: "after".to_string(),
+                    }],
+                    false,
+                    Some(task_tool_call_id.as_str()),
+                )
+                .await
+        });
+
+        let approval_id = wait_for_pending_approval(&storage, "edit_file").await;
+        context
+            .approvals
+            .resolve(&approval_id, false)
+            .expect("reject edit");
+
+        let result = handle.await.expect("join");
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&target).expect("read"), "before\n");
     }
 
     #[tokio::test]
     async fn memory_paths_bypass_approval_and_trigger_sync() {
         let dir = tempdir().expect("tempdir");
-        let storage = StorageService::new(dir.path().join("state")).expect("storage");
-        let workspace_root = dir.path().join("workspace");
-        std::fs::create_dir_all(&workspace_root).expect("workspace");
-        std::fs::create_dir_all(workspace_root.join("memory")).expect("memory dir");
-        let context = super::FilesystemToolContext {
-            session_id: "session-1".to_string(),
-            turn_id: "turn-1".to_string(),
-            workspace_root: workspace_root.clone(),
-            current_step: Arc::new(AtomicU8::new(1)),
-            tool_calls: Arc::new(Mutex::new(std::collections::VecDeque::new())),
-            cancellation_token: CancellationToken::new(),
-            approvals: ApprovalService::new(storage.clone()),
-            storage: storage.clone(),
-            hub: WsHub::new(),
-        };
+        let (context, storage, _workspace_root) = build_test_context(&dir);
+        let tool_call_id = register_tool_call(
+            &context,
+            "write_file",
+            json!({
+                "path": "MEMORY.md",
+            }),
+        );
 
         let payload = context
-            .write_file("filesystem_write_file", "MEMORY.md", "hello memory")
+            .write_file(
+                "write_file",
+                "MEMORY.md",
+                "hello memory",
+                Some(tool_call_id.as_str()),
+            )
             .await
             .expect("write memory");
+
         assert_eq!(
             payload
                 .get("approval_bypassed")

@@ -15,9 +15,10 @@ use crate::backend::models::{
     now_timestamp, AgentConfigUpdateRequest, BindSessionProviderRequest, ChatTurnCancelRequest,
     ChatTurnStartRequest, ConnectionReadyPayload, CreateProviderModelRequest,
     CreateProviderRequest, CreateSessionRequest, DeleteProviderModelRequest, DeleteSessionRequest,
-    MemoryGetRequest, MemorySearchRequest, RenameSessionRequest, TestProviderModelRequest,
-    ToolApprovalResolveRequest, TurnStepsListPayload, TurnStepsListRequest,
-    UpdateProviderModelRequest, UpdateProviderRequest, UsageLogDetailRequest, UsageLogsListRequest,
+    MemoryGetRequest, MemorySearchRequest, PurgeSessionRequest, RenameSessionRequest,
+    RestoreSessionRequest, TestProviderModelRequest, ToolApprovalResolveRequest,
+    TurnStepsListPayload, TurnStepsListRequest, UpdateProviderModelRequest, UpdateProviderRequest,
+    UpdateSessionApprovalModeRequest, UsageLogDetailRequest, UsageLogsListRequest,
     UsageStatsListRequest, UsageSummaryRequest, WorkspaceFileReadRequest,
     WorkspaceFileWriteRequest, WsEnvelope, WsKind,
 };
@@ -169,6 +170,10 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
             envelope.name,
             state.storage.sessions_payload()?,
         )?,
+        "sessions.archived.list" => {
+            let payload = state.list_archived_sessions()?;
+            WsEnvelope::response_ok(envelope.id, envelope.name, payload)?
+        }
         "sessions.create" => {
             let req = serde_json::from_value::<CreateSessionRequest>(envelope.payload)?;
             let session = state.create_session(req.provider_profile_id)?;
@@ -180,7 +185,25 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
             WsEnvelope::response_ok(
                 envelope.id,
                 envelope.name,
-                serde_json::json!({ "deleted": true }),
+                serde_json::json!({ "archived": true }),
+            )?
+        }
+        "sessions.restore" => {
+            let req = serde_json::from_value::<RestoreSessionRequest>(envelope.payload)?;
+            state.restore_session(&req.session_id)?;
+            WsEnvelope::response_ok(
+                envelope.id,
+                envelope.name,
+                serde_json::json!({ "restored": true }),
+            )?
+        }
+        "sessions.purge" => {
+            let req = serde_json::from_value::<PurgeSessionRequest>(envelope.payload)?;
+            state.purge_session(&req.session_id)?;
+            WsEnvelope::response_ok(
+                envelope.id,
+                envelope.name,
+                serde_json::json!({ "purged": true }),
             )?
         }
         "sessions.rename" => {
@@ -199,6 +222,15 @@ async fn dispatch_request(state: Arc<BackendState>, envelope: WsEnvelope) -> App
                 envelope.id,
                 envelope.name,
                 serde_json::json!({ "bound": true }),
+            )?
+        }
+        "sessions.update_approval_mode" => {
+            let req = serde_json::from_value::<UpdateSessionApprovalModeRequest>(envelope.payload)?;
+            state.update_session_approval_mode(&req.session_id, req.approval_mode)?;
+            WsEnvelope::response_ok(
+                envelope.id,
+                envelope.name,
+                serde_json::json!({ "updated": true }),
             )?
         }
         "chat.turn.start" => {

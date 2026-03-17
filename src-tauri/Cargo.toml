@@ -23,6 +23,8 @@ axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 futures-util = "0.3"
+glob = "0.3"
+ignore = "0.4"
 rusqlite = { version = "0.34", features = ["bundled"] }
 schemars = { version = "0.8", features = ["derive"] }
 similar = "2"

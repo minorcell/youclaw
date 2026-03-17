@@ -130,10 +130,19 @@
   }
   body {
     @apply bg-background text-foreground antialiased overflow-hidden;
+    user-select: none;
+    -webkit-user-select: none;
   }
   html {
     font-size: var(--app-font-size);
     font-family: var(--app-font-family);
+  }
+  input,
+  textarea,
+  [contenteditable='true'],
+  [data-allow-text-selection='true'] {
+    user-select: text;
+    -webkit-user-select: text;
   }
 }
 

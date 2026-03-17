@@ -135,11 +135,12 @@ impl BackendState {
 }
 
 fn validate_provider_account_request(name: &str, base_url: &str, api_key: &str) -> AppResult<()> {
-    if name.trim().is_empty() || base_url.trim().is_empty() || api_key.trim().is_empty() {
+    if name.trim().is_empty() || base_url.trim().is_empty() {
         return Err(AppError::Validation(
             "provider fields cannot be empty".to_string(),
         ));
     }
+    provider::validate_provider_api_key_input(api_key)?;
     Ok(())
 }
 
@@ -153,9 +154,10 @@ fn validate_provider_model_request(model_name: &str, model: &str) -> AppResult<(
 }
 
 async fn test_provider_connection(base_url: &str, api_key: &str, model: &str) -> AppResult<()> {
+    let resolved_api_key = provider::resolve_provider_api_key(api_key)?;
     let (normalized_base_url, chat_path) = provider::normalize_openai_compatible_endpoint(base_url);
     let builder = LlmClient::openai_compatible(normalized_base_url)
-        .api_key(api_key.to_string())
+        .api_key(resolved_api_key)
         .think_tag_parsing(true);
     let client = if let Some(path) = chat_path {
         builder.chat_completions_path(path).build()?

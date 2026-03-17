@@ -20,9 +20,11 @@ impl StorageService {
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 provider_profile_id TEXT,
+                approval_mode TEXT NOT NULL DEFAULT 'default',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                last_turn_at TEXT
+                last_turn_at TEXT,
+                archived_at TEXT
             );
             CREATE TABLE IF NOT EXISTS chat_messages (
                 id TEXT PRIMARY KEY,
@@ -108,8 +110,10 @@ impl StorageService {
                 id TEXT PRIMARY KEY,
                 turn_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
+                call_id TEXT,
                 tool_name TEXT NOT NULL,
                 tool_action TEXT,
+                args_json TEXT NOT NULL DEFAULT '{}',
                 status TEXT NOT NULL,
                 duration_ms INTEGER,
                 is_error INTEGER NOT NULL DEFAULT 0,
@@ -117,10 +121,9 @@ impl StorageService {
             );
             CREATE TABLE IF NOT EXISTS agent_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                max_steps INTEGER NOT NULL DEFAULT 8,
-                max_input_tokens INTEGER NOT NULL DEFAULT 32768,
-                compact_ratio REAL NOT NULL DEFAULT 0.7,
-                keep_recent INTEGER NOT NULL DEFAULT 8,
+                max_steps INTEGER NOT NULL DEFAULT 64,
+                max_input_tokens INTEGER NOT NULL DEFAULT 120000,
+                compact_ratio REAL NOT NULL DEFAULT 0.8,
                 language TEXT NOT NULL DEFAULT 'zh',
                 updated_at TEXT NOT NULL
             );
@@ -172,6 +175,8 @@ impl StorageService {
             ON turn_tool_metrics (tool_name, tool_action, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_chat_steps_turn
             ON chat_steps (turn_id, step);
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_archived_last_turn
+            ON chat_sessions (archived_at, last_turn_at DESC, updated_at DESC, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_message_marks_mark
             ON message_marks (mark, message_id);
             CREATE INDEX IF NOT EXISTS idx_memory_chunks_path
@@ -180,12 +185,12 @@ impl StorageService {
             ON memory_source_files (source);
             ",
         )?;
-        ensure_memory_schema_fields(&conn)?;
+        ensure_chat_sessions_approval_mode_column(&conn)?;
+        ensure_turn_tool_metrics_detail_columns(&conn)?;
         conn.execute(
             "INSERT OR IGNORE INTO agent_settings (
-                id, max_steps, max_input_tokens, compact_ratio, keep_recent,
-                language, updated_at
-             ) VALUES (1, 8, 32768, 0.7, 8, 'zh', ?1)",
+                id, max_steps, max_input_tokens, compact_ratio, language, updated_at
+             ) VALUES (1, 64, 120000, 0.8, 'zh', ?1)",
             [now_timestamp()],
         )?;
         Ok(())
@@ -198,39 +203,39 @@ impl StorageService {
     }
 }
 
-fn ensure_memory_schema_fields(conn: &Connection) -> AppResult<()> {
-    ensure_table_column(
-        conn,
-        "memory_chunks",
-        "file_hash",
-        "TEXT NOT NULL DEFAULT ''",
-    )?;
-    ensure_table_column(
-        conn,
-        "memory_chunks",
-        "source",
-        "TEXT NOT NULL DEFAULT 'memory'",
-    )?;
+fn ensure_chat_sessions_approval_mode_column(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(chat_sessions)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let has_approval_mode = columns
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|column| column == "approval_mode");
+
+    if !has_approval_mode {
+        conn.execute(
+            "ALTER TABLE chat_sessions ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'default'",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
-fn ensure_table_column(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> AppResult<()> {
-    let pragma = format!("PRAGMA table_info({table})");
-    let mut stmt = conn.prepare(&pragma)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let name = row.get::<_, String>(1)?;
-        if name == column {
-            return Ok(());
-        }
+fn ensure_turn_tool_metrics_detail_columns(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(turn_tool_metrics)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = columns.collect::<Result<Vec<_>, _>>()?;
+
+    if !existing.iter().any(|column| column == "call_id") {
+        conn.execute("ALTER TABLE turn_tool_metrics ADD COLUMN call_id TEXT", [])?;
     }
 
-    let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
-    conn.execute(&sql, [])?;
+    if !existing.iter().any(|column| column == "args_json") {
+        conn.execute(
+            "ALTER TABLE turn_tool_metrics ADD COLUMN args_json TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )?;
+    }
+
     Ok(())
 }

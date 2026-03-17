@@ -13,6 +13,7 @@ export function flattenProviderProfiles(providerAccounts: ProviderAccount[]): Pr
         base_url: provider.base_url,
         api_key: provider.api_key,
         model: model.model,
+        context_window_tokens: model.context_window_tokens ?? null,
         created_at: model.created_at,
         updated_at: model.updated_at,
       })

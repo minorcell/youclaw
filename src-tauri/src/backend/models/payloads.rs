@@ -140,6 +140,11 @@ pub struct SessionsChangedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchivedSessionsPayload {
+    pub sessions: Vec<ChatSession>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionReadyPayload {
     pub server_time: String,
     pub version: String,

@@ -1,15 +1,29 @@
-import { Eye, EyeOff, RotateCcw } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 
+import {
+  parseProviderApiKeyInput,
+  ProviderApiKeyField,
+  type ProviderApiKeyInputValue,
+  serializeProviderApiKeyInput,
+  validateProviderApiKeyInput,
+} from '@/components/provider-api-key-field'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DEFAULT_PROVIDER_BASE_URL, DEFAULT_PROVIDER_NAME } from '@/lib/provider-defaults'
 import type { ProviderAccount } from '@/lib/types'
 
 interface ProviderFormValue {
   profile_name: string
   base_url: string
   api_key: string
+}
+
+interface ProviderFormState {
+  profile_name: string
+  base_url: string
+  api_key: ProviderApiKeyInputValue
 }
 
 interface ProviderFormProps {
@@ -19,13 +33,11 @@ interface ProviderFormProps {
   onSubmit: (value: ProviderFormValue) => Promise<void>
 }
 
-const DEFAULT_PROVIDER_BASE_URL = 'https://api.deepseek.com'
-
-function normalizeFormValue(value: ProviderFormValue): ProviderFormValue {
+function normalizeFormValue(value: ProviderFormState): ProviderFormValue {
   return {
     profile_name: value.profile_name.trim(),
     base_url: value.base_url.trim(),
-    api_key: value.api_key.trim(),
+    api_key: serializeProviderApiKeyInput(value.api_key),
   }
 }
 
@@ -43,27 +55,31 @@ function sameFormValue(a: ProviderFormValue, b: ProviderFormValue): boolean {
 }
 
 export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: ProviderFormProps) {
-  const initial = useMemo<ProviderFormValue>(
+  const initialApiKey = useMemo(
+    () => parseProviderApiKeyInput(initialValue?.api_key ?? ''),
+    [initialValue?.api_key],
+  )
+
+  const initial = useMemo<ProviderFormState>(
     () => ({
-      profile_name: initialValue?.name ?? '',
+      profile_name: initialValue?.name ?? DEFAULT_PROVIDER_NAME,
       base_url: initialValue?.base_url ?? DEFAULT_PROVIDER_BASE_URL,
-      api_key: initialValue?.api_key ?? '',
+      api_key: initialApiKey,
     }),
-    [initialValue],
+    [initialApiKey, initialValue?.base_url, initialValue?.name],
   )
 
   const [form, setForm] = useState(initial)
-  const [showApiKey, setShowApiKey] = useState(false)
   const [baseUrlTouched, setBaseUrlTouched] = useState(false)
 
   useEffect(() => {
     setForm(initial)
-    setShowApiKey(false)
     setBaseUrlTouched(false)
   }, [initial])
 
   const normalizedInitial = useMemo(() => normalizeFormValue(initial), [initial])
   const normalizedCurrent = useMemo(() => normalizeFormValue(form), [form])
+  const apiKeyError = useMemo(() => validateProviderApiKeyInput(form.api_key), [form.api_key])
 
   const hasRequiredFields =
     normalizedCurrent.profile_name.length > 0 &&
@@ -74,7 +90,12 @@ export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: Prov
   const isDirty = !sameFormValue(normalizedCurrent, normalizedInitial)
 
   const showBaseUrlError = baseUrlTouched && !isBaseUrlValid
-  const canSubmit = !busy && hasRequiredFields && isBaseUrlValid && (initialValue ? isDirty : true)
+  const canSubmit =
+    !busy &&
+    hasRequiredFields &&
+    isBaseUrlValid &&
+    apiKeyError === null &&
+    (initialValue ? isDirty : true)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -85,7 +106,6 @@ export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: Prov
 
   function handleReset() {
     setForm(initial)
-    setShowApiKey(false)
     setBaseUrlTouched(false)
   }
 
@@ -102,7 +122,7 @@ export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: Prov
               profile_name: event.target.value,
             }))
           }
-          placeholder='OpenAI-compatible'
+          placeholder={DEFAULT_PROVIDER_NAME}
           required
           value={form.profile_name}
         />
@@ -127,8 +147,7 @@ export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: Prov
         />
         {!showBaseUrlError ? (
           <p className='text-xs text-muted-foreground'>
-            可填根地址（如 `https://api.deepseek.com`）或完整 chat endpoint（如
-            `.../chat/completions`）。
+            示例：`https://api.minimaxi.com/v1`
           </p>
         ) : null}
         {showBaseUrlError ? (
@@ -138,34 +157,17 @@ export function ProviderForm({ initialValue, busy, submitLabel, onSubmit }: Prov
         ) : null}
       </div>
 
-      <div className='space-y-2'>
-        <Label className='text-xs uppercase tracking-[0.18em] text-muted-foreground'>API Key</Label>
-        <div className='relative'>
-          <Input
-            className='pr-9'
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                api_key: event.target.value,
-              }))
-            }
-            placeholder='sk-...'
-            required
-            type={showApiKey ? 'text' : 'password'}
-            value={form.api_key}
-          />
-          <Button
-            aria-label={showApiKey ? '隐藏 API Key' : '显示 API Key'}
-            className='absolute right-1 top-1/2 -translate-y-1/2'
-            onClick={() => setShowApiKey((current) => !current)}
-            size='icon-xs'
-            type='button'
-            variant='ghost'
-          >
-            {showApiKey ? <EyeOff className='h-3.5 w-3.5' /> : <Eye className='h-3.5 w-3.5' />}
-          </Button>
-        </div>
-      </div>
+      <ProviderApiKeyField
+        disabled={busy}
+        error={apiKeyError}
+        onChange={(api_key) =>
+          setForm((current) => ({
+            ...current,
+            api_key,
+          }))
+        }
+        value={form.api_key}
+      />
 
       <div className='flex flex-wrap items-center justify-end gap-2 pt-1'>
         <Button disabled={busy || !isDirty} onClick={handleReset} type='button' variant='outline'>

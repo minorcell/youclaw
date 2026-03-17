@@ -4,7 +4,7 @@ import { persist } from 'zustand/middleware'
 export type ThemeMode = 'white' | 'black' | 'custom'
 export type ThemePresetId = 'grass-green' | 'desert-yellow' | 'college-blue' | 'deep-sea-blue'
 export type ThemeFontSize = 'small' | 'medium' | 'large'
-export type SettingsSection = 'general' | 'theme' | 'memory' | 'providers' | 'usage'
+export type SettingsSection = 'general' | 'theme' | 'memory' | 'providers' | 'archive' | 'usage'
 export type SelectedProviderId = string | 'new'
 
 export interface CustomThemePalette {
@@ -102,33 +102,6 @@ function getPresetPalette(presetId: ThemePresetId): CustomThemePalette {
   return themePresetPaletteMap[presetId]
 }
 
-function isThemePresetId(value: unknown): value is ThemePresetId {
-  return (
-    value === 'grass-green' ||
-    value === 'desert-yellow' ||
-    value === 'college-blue' ||
-    value === 'deep-sea-blue'
-  )
-}
-
-function normalizePresetId(value: unknown): ThemePresetId {
-  if (isThemePresetId(value)) {
-    return value
-  }
-  return defaultThemePresetId
-}
-
-function isThemeFontSize(value: unknown): value is ThemeFontSize {
-  return value === 'small' || value === 'medium' || value === 'large'
-}
-
-function normalizeFontSize(value: unknown): ThemeFontSize {
-  if (isThemeFontSize(value)) {
-    return value
-  }
-  return 'medium'
-}
-
 interface PersistedSettingsThemeState {
   mode: ThemeMode
   preset: ThemePresetId
@@ -187,22 +160,6 @@ export const useSettingsStore = create<SettingsStoreState>()(
         fontSize: state.fontSize,
         useSerif: state.useSerif,
       }),
-      migrate: (persistedState, _version) => {
-        const state = (persistedState ?? {}) as Partial<
-          PersistedSettingsThemeState & { preset?: string; fontSize?: string }
-        >
-        const nextPreset = normalizePresetId(state.preset)
-        const nextFontSize = normalizeFontSize(state.fontSize)
-        const nextUseSerif = typeof state.useSerif === 'boolean' ? state.useSerif : false
-        return {
-          mode: state.mode ?? 'white',
-          preset: nextPreset,
-          custom: getPresetPalette(nextPreset),
-          fontSize: nextFontSize,
-          useSerif: nextUseSerif,
-          ...defaultSettingsUiState,
-        }
-      },
     },
   ),
 )

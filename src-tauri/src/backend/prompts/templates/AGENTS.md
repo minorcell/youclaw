@@ -18,7 +18,7 @@ read_when:
 
 - 长期信息写入：`MEMORY.md`
 - 每日记录写入：`memory/YYYY-MM-DD.md`
-- 写入请使用工作区写文件能力（例如 `filesystem_write_file` 或设置页编辑器）
+- 写入请使用工作区写文件能力（`write_file` 或设置页编辑器）
 - 先读后写，避免覆盖已有内容
 
 ## 用户建模

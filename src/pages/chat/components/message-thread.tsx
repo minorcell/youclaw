@@ -50,9 +50,9 @@ function ToolBlock({ tool }: { tool: ToolRenderUnit }) {
 
 function StepBlock({ step }: { step: StepRenderUnit }) {
   return (
-    <div>
+    <div className='space-y-4'>
       {step.reasoningText ? (
-        <details className='mb-3 rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm'>
+        <details className='rounded-2xl border border-border/70 bg-muted/30 px-4 py-3 text-sm'>
           <summary className='cursor-pointer text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground'>
             Model reasoning
           </summary>
@@ -80,7 +80,7 @@ function StepBlock({ step }: { step: StepRenderUnit }) {
         </Streamdown>
       ) : null}
       {step.tools.length > 0 ? (
-        <div className='mt-3 space-y-2'>
+        <div className='space-y-2'>
           {step.tools.map((tool) => (
             <ToolBlock key={tool.callId} tool={tool} />
           ))}
@@ -104,28 +104,19 @@ function AgentResponse({
   )
   if (!hasContent && !error) return null
 
-  const isMultiStep = steps.length > 1
-
   return (
     <article className='max-w-[76ch]'>
       <div className='mb-2 flex items-center gap-2 text-sm text-muted-foreground'>
         <Bot className='h-4 w-4' />
         <span className='font-medium'>{providerLabel}</span>
       </div>
-      {steps.map((step, index) => (
-        <div key={step.step}>
-          {isMultiStep && index > 0 ? (
-            <div className='my-4 flex items-center gap-3'>
-              <div className='h-px flex-1 bg-border/30' />
-              <span className='text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground/50'>
-                step {index + 1}
-              </span>
-              <div className='h-px flex-1 bg-border/30' />
-            </div>
-          ) : null}
-          <StepBlock step={step} />
-        </div>
-      ))}
+      <div className='space-y-5'>
+        {steps.map((step) => (
+          <div key={step.step}>
+            <StepBlock step={step} />
+          </div>
+        ))}
+      </div>
       {error ? (
         <Card className='mt-3 border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-none'>
           <div className='flex items-start gap-2'>
