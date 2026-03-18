@@ -1,0 +1,31 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  fill="none"
+>
+  <defs>
+    <linearGradient id="youclaw-surface" x1="88" y1="72" x2="402" y2="444" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="1" stop-color="#F3F3EE" />
+    </linearGradient>
+    <radialGradient id="youclaw-shadow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 370) rotate(90) scale(106 178)">
+      <stop stop-color="#000000" stop-opacity="0.09" />
+      <stop offset="1" stop-color="#000000" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <rect x="40" y="40" width="432" height="432" rx="116" fill="url(#youclaw-surface)" />
+  <rect x="44" y="44" width="424" height="424" rx="112" stroke="#DBDBD4" stroke-width="8" />
+  <path
+    d="M120 320C120 281.34 151.34 250 190 250H322C360.66 250 392 281.34 392 320V348C392 386.66 360.66 418 322 418H190C151.34 418 120 386.66 120 348V320Z"
+    fill="url(#youclaw-shadow)"
+  />
+
+  <g fill="#121212">
+    <path d="M153.388 145.521C164.548 127.812 189.443 123.951 205.398 137.174L258.075 202.115C271.873 219.133 265.224 244.884 245.103 253.001C233.499 257.683 220.254 254.512 212.109 245.241L149.491 173.953C141.924 165.336 140.916 154.15 147.028 147.143L153.388 145.521Z" />
+    <path d="M358.612 145.521C347.452 127.812 322.557 123.951 306.602 137.174L253.925 202.115C240.127 219.133 246.776 244.884 266.897 253.001C278.501 257.683 291.746 254.512 299.891 245.241L362.509 173.953C370.076 165.336 371.084 154.15 364.972 147.143L358.612 145.521Z" />
+    <path d="M230 246.949C230 232.037 242.088 219.949 257 219.949H255C269.912 219.949 282 232.037 282 246.949V364C282 382.225 270.673 397 256 397C241.327 397 230 382.225 230 364V246.949Z" />
+  </g>
+</svg>
