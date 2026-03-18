@@ -3,6 +3,7 @@ import { Navigate, useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 
 import { ChatComposer } from '@/pages/chat/components/chat-composer'
+import { ChatStartPage } from '@/pages/chat/components/chat-start-page'
 import { MessageThread } from '@/pages/chat/components/message-thread'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToastContext } from '@/contexts/toast-context'
@@ -22,18 +23,41 @@ const EMPTY_TURNS: TurnViewState[] = []
 
 export function ChatPage() {
   const params = useParams<{ sessionId: string }>()
-  const sessionId = params.sessionId ?? null
+  const routeSessionId = params.sessionId ?? null
   const { error: toastError } = useToastContext()
 
-  const { providerAccounts, sessions, approvalsById, setActiveSession, clearError } = useAppStore(
+  const {
+    activeSessionId: storedActiveSessionId,
+    providerAccounts,
+    sessions,
+    approvalsById,
+    lastOpenedSessionId,
+    setActiveSession,
+    clearError,
+  } = useAppStore(
     useShallow((state) => ({
+      activeSessionId: state.activeSessionId,
       providerAccounts: state.providerAccounts,
       sessions: state.sessions,
       approvalsById: state.approvalsById,
+      lastOpenedSessionId: state.lastOpenedSessionId,
       setActiveSession: state.setActiveSession,
       clearError: state.clearError,
     })),
   )
+
+  const sessionId = useMemo(() => {
+    if (routeSessionId && sessions.some((session) => session.id === routeSessionId)) {
+      return routeSessionId
+    }
+
+    return (
+      [storedActiveSessionId, lastOpenedSessionId, sessions[0]?.id].find(
+        (candidate): candidate is string =>
+          Boolean(candidate) && sessions.some((session) => session.id === candidate),
+      ) ?? null
+    )
+  }, [routeSessionId, storedActiveSessionId, lastOpenedSessionId, sessions])
 
   const messages = useAppStore((state) =>
     sessionId ? (state.messagesBySession[sessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
@@ -93,6 +117,15 @@ export function ChatPage() {
       .sort((left, right) => right.created_at.localeCompare(left.created_at))
   }, [approvalsById, sessionId])
 
+  const hasRenderableMessages = useMemo(
+    () => messages.some((message) => message.role !== 'system'),
+    [messages],
+  )
+  const showStartPage =
+    !!activeSession &&
+    !hasRenderableMessages &&
+    turnRenderUnits.length === 0 &&
+    pendingApprovals.length === 0
   const isTurnRunning = activeTurnStatus === 'running'
 
   useEffect(() => {
@@ -103,6 +136,10 @@ export function ChatPage() {
 
   if (providers.length === 0) {
     return <Navigate replace to='/welcome/provider' />
+  }
+
+  if (sessionId && routeSessionId !== sessionId) {
+    return <Navigate replace to={`/chat/${sessionId}`} />
   }
 
   if (!activeSession) {
@@ -172,18 +209,22 @@ export function ChatPage() {
           viewportRef={scrollContainerRef}
         >
           <div className='px-6 pb-72 pt-8 md:px-[9%]'>
-            <div className='select-text'>
-              <MessageThread
-                providerLabel={
-                  activeProvider
-                    ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
-                    : 'YouClaw Agent'
-                }
-                turns={turnRenderUnits}
-              />
-            </div>
+            {showStartPage ? (
+              <ChatStartPage />
+            ) : (
+              <div className='select-text'>
+                <MessageThread
+                  providerLabel={
+                    activeProvider
+                      ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
+                      : 'YouClaw Agent'
+                  }
+                  turns={turnRenderUnits}
+                />
+              </div>
+            )}
 
-            {pendingApprovals.length > 0 ? (
+            {!showStartPage && pendingApprovals.length > 0 ? (
               <div className='mt-6 space-y-3 select-text'>
                 {pendingApprovals.map((approval) => (
                   <ToolApprovalCard

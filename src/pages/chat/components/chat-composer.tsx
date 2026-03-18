@@ -71,6 +71,7 @@ export function ChatComposer({
     <Card className='rounded-2xl border border-border/70 bg-background/95 py-0 shadow-lg backdrop-blur'>
       <div className='px-3 pt-2.5'>
         <Textarea
+          data-chat-composer-input='true'
           className='rounded-xs min-h-14 max-h-56 resize-none border-0 bg-transparent p-0 text-[15px] leading-[1.35] shadow-none focus-visible:ring-0 overflow-y-auto dark:bg-transparent'
           onChange={(event) => onInputChange(event.target.value)}
           onCompositionEnd={() => {
