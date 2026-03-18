@@ -35,7 +35,7 @@ export const settingsSectionMeta: Record<SettingsSection, SettingsSectionMeta> =
   },
   general: {
     label: '通用设置',
-    description: '管理 Agent 基础配置与行为选项',
+    description: '管理桌面行为、系统权限与 Agent 基础配置',
     icon: SlidersHorizontal,
   },
   memory: {

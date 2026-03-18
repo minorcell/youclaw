@@ -2,6 +2,7 @@ mod memory;
 mod providers;
 mod schema;
 mod sessions;
+mod settings;
 mod shell;
 mod usage;
 

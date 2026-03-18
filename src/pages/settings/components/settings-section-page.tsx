@@ -1,6 +1,7 @@
 import { Navigate, useParams } from 'react-router-dom'
 
 import { AgentConfigSettingsSection } from '@/pages/settings/pages/general/components/agent-config-settings-section'
+import { DesktopIntegrationSettingsSection } from '@/pages/settings/pages/general/components/desktop-integration-settings-section'
 import { ArchiveSettingsPage } from '@/pages/settings/pages/archive'
 import { AgentMemoryFilesSection } from '@/pages/settings/pages/memory/components/agent-memory-files-section'
 import { ProvidersSettingsPage } from '@/pages/settings/pages/providers'
@@ -51,7 +52,12 @@ export function SettingsSectionPage() {
   }
 
   if (rawSection === 'general') {
-    return <AgentConfigSettingsSection />
+    return (
+      <div className='space-y-4'>
+        <DesktopIntegrationSettingsSection />
+        <AgentConfigSettingsSection />
+      </div>
+    )
   }
 
   if (rawSection === 'memory') {
