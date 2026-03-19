@@ -13,7 +13,16 @@ pub(crate) fn build_turn_messages(
     session_id: &str,
 ) -> AppResult<Vec<Message>> {
     let mut messages = Vec::new();
-    messages.push(Message::system_text(state.workspace.build_system_prompt()?));
+    let session = state.storage.get_session(session_id)?;
+    let workspace_path = session.workspace_path.as_deref().ok_or_else(|| {
+        AppError::Validation("session has no bound workspace".to_string())
+    })?;
+    let profiles = state.profile_service().list_all()?;
+    messages.push(Message::system_text(
+        state
+            .workspace
+            .build_system_prompt(std::path::Path::new(workspace_path), &profiles)?,
+    ));
 
     let compressed_summary = state.storage.get_session_compressed_summary(session_id)?;
     if !compressed_summary.trim().is_empty() {
@@ -31,8 +40,8 @@ pub(crate) fn build_turn_messages(
     Ok(messages)
 }
 
-/// Inject one-off bootstrap guidance right after system/(summary) prefix.
-pub(crate) fn inject_bootstrap_guidance(messages: &mut Vec<Message>, guidance: &str) {
+/// Inject one-off guidance right after system/(summary) prefix.
+pub(crate) fn inject_turn_guidance(messages: &mut Vec<Message>, guidance: &str) {
     if guidance.trim().is_empty() {
         return;
     }

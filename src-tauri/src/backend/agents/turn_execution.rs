@@ -10,15 +10,17 @@ use crate::backend::agents::context_compactor::{
     compact_in_memory_messages, maybe_compact_session_context,
 };
 use crate::backend::agents::message_builder::{
-    build_turn_messages, inject_bootstrap_guidance, make_assistant_message,
+    build_turn_messages, inject_turn_guidance, make_assistant_message,
 };
 use crate::backend::agents::stream_collector::collect_step_stream;
 use crate::backend::agents::token_estimator::estimate_tokens_for_messages;
 use crate::backend::agents::tool_dispatcher::handle_tool_calls;
-use crate::backend::agents::tools::{
-    build_bash_exec_tool, build_filesystem_tools, build_memory_get_tool, build_memory_search_tool,
-    BashToolContext, FilesystemToolContext, ToolRuntimeContext,
-};
+    use crate::backend::agents::tools::{
+        build_bash_exec_tool, build_filesystem_tools, build_memory_system_get_tool,
+        build_memory_system_remember_tool, build_memory_system_search_tool,
+        build_memory_system_update_tool, build_profile_get_tool, build_profile_update_tool,
+        BashToolContext, FilesystemToolContext, ToolRuntimeContext,
+    };
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::domain::{
     record_from_message, title_from_first_prompt, ChatMessage, ChatTurn, TurnStatus,
@@ -73,15 +75,9 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
         false,
     )?;
     let mut messages = build_turn_messages(&state, &turn.session_id)?;
-    let bootstrap_guidance = if state.workspace.should_bootstrap() {
-        let guidance = state.workspace.build_bootstrap_guidance(&config.language);
-        state.workspace.mark_bootstrap_completed()?;
-        Some(guidance)
-    } else {
-        None
-    };
-    if let Some(guidance) = bootstrap_guidance.as_deref() {
-        inject_bootstrap_guidance(&mut messages, guidance);
+    let onboarding_guidance = build_profile_onboarding_guidance(&state, &turn.session_id)?;
+    if let Some(guidance) = onboarding_guidance.as_deref() {
+        inject_turn_guidance(&mut messages, guidance);
     }
 
     let current_step = Arc::new(AtomicU8::new(0));
@@ -101,17 +97,26 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
         storage: state.storage.clone(),
         hub: state.ws_hub.clone(),
     };
+    let workspace_root = session
+        .workspace_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| AppError::Validation("session has no bound workspace".to_string()))?;
     let filesystem_context = FilesystemToolContext {
         runtime: tool_runtime.clone(),
-        workspace_root: state.workspace.root().to_path_buf(),
+        workspace_root: workspace_root.clone(),
     };
     let mut tools = build_filesystem_tools(filesystem_context);
     tools.push(build_bash_exec_tool(BashToolContext {
         runtime: tool_runtime,
-        workspace_root: state.workspace.root().to_path_buf(),
+        workspace_root,
     }));
-    tools.push(build_memory_search_tool(state.memory_service()));
-    tools.push(build_memory_get_tool(state.memory_service()));
+    tools.push(build_profile_get_tool(state.profile_service()));
+    tools.push(build_profile_update_tool(state.profile_service()));
+    tools.push(build_memory_system_search_tool(state.memory_service()));
+    tools.push(build_memory_system_get_tool(state.memory_service()));
+    tools.push(build_memory_system_remember_tool(state.memory_service()));
+    tools.push(build_memory_system_update_tool(state.memory_service()));
 
     let tool_map = tools
         .iter()
@@ -145,8 +150,8 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
                 .is_some()
                 {
                     messages = build_turn_messages(&state, &turn.session_id)?;
-                    if let Some(guidance) = bootstrap_guidance.as_deref() {
-                        inject_bootstrap_guidance(&mut messages, guidance);
+                    if let Some(guidance) = onboarding_guidance.as_deref() {
+                        inject_turn_guidance(&mut messages, guidance);
                     }
                 }
             } else {
@@ -262,6 +267,30 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
         &usage_total,
         completed_step_count,
     )
+}
+
+fn build_profile_onboarding_guidance(
+    state: &BackendState,
+    session_id: &str,
+) -> AppResult<Option<String>> {
+    let missing_targets = state.profile_service().missing_targets()?;
+    if missing_targets.is_empty() {
+        return Ok(None);
+    }
+
+    let active_messages = state.storage.list_active_messages_for_session(session_id)?;
+    if active_messages.len() > 1 {
+        return Ok(None);
+    }
+
+    let missing = missing_targets
+        .iter()
+        .map(|target| target.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(Some(format!(
+        "# 首次画像配置\n\n当前 profile system 中仍缺少：{missing}。\n请先用最少的问题帮助用户完成缺失画像：`user` 用于沉淀稳定的身份、偏好、沟通和协作约束；`soul` 用于沉淀 agent 自身的长期协作方式与工作原则。\n拿到明确信息后，用 `profile_update` 分别写回对应 target。若用户明确不想现在配置，继续当前任务，但不要编造 profile 内容。"
+    )))
 }
 
 pub(crate) fn clamp_max_steps(value: u8) -> u8 {

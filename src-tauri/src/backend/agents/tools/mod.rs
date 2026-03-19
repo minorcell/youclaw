@@ -6,8 +6,12 @@ mod bash;
 mod edit_file;
 mod filesystem_context;
 mod list_directory;
-mod memory_get;
-mod memory_search;
+mod memory_system_get;
+mod memory_system_remember;
+mod memory_system_search;
+mod memory_system_update;
+mod profile_get;
+mod profile_update;
 mod read_files;
 mod read_text_file;
 mod search_files;
@@ -18,8 +22,12 @@ pub use bash::{build_bash_exec_tool, BashToolContext, BASH_EXEC_TOOL_NAME};
 pub use edit_file::{build_edit_file_tool, EDIT_FILE_TOOL_NAME};
 pub use filesystem_context::FilesystemToolContext;
 pub use list_directory::{build_list_directory_tool, LIST_DIRECTORY_TOOL_NAME};
-pub use memory_get::build_memory_get_tool;
-pub use memory_search::build_memory_search_tool;
+pub use memory_system_get::build_memory_system_get_tool;
+pub use memory_system_remember::build_memory_system_remember_tool;
+pub use memory_system_search::build_memory_system_search_tool;
+pub use memory_system_update::build_memory_system_update_tool;
+pub use profile_get::build_profile_get_tool;
+pub use profile_update::build_profile_update_tool;
 pub use read_files::{build_read_files_tool, READ_FILES_TOOL_NAME};
 pub use read_text_file::{build_read_text_file_tool, READ_TEXT_FILE_TOOL_NAME};
 pub use search_files::{build_search_files_tool, SEARCH_FILES_TOOL_NAME};
@@ -82,10 +90,15 @@ pub(crate) fn filesystem_tool_action(tool_name: &str) -> Option<&'static str> {
 
 pub(crate) fn tool_action(tool_name: &str) -> Option<&'static str> {
     filesystem_tool_action(tool_name).or_else(|| {
-        if tool_name == BASH_EXEC_TOOL_NAME {
-            Some("exec")
-        } else {
-            None
+        match tool_name {
+            BASH_EXEC_TOOL_NAME => Some("exec"),
+            "profile_get" => Some("get"),
+            "profile_update" => Some("update"),
+            "memory_system_search" => Some("search"),
+            "memory_system_get" => Some("get"),
+            "memory_system_remember" => Some("remember"),
+            "memory_system_update" => Some("update"),
+            _ => None,
         }
     })
 }

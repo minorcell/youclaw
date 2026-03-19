@@ -46,9 +46,7 @@
 - `token_estimator.rs`
   估算消息 token。
 - `workspace.rs`
-  管理 agent workspace、模板文件、bootstrap context、系统 prompt 拼装。
-- `memory.rs`
-  管理 `MEMORY.md` / `memory/*.md` 的检索、读取、增量索引。
+  管理 agent 内部上下文目录、`AGENTS.md` 模板安装与系统 prompt 拼装。
 - `tools/`
   工具实现与工具运行时。
 
@@ -73,7 +71,7 @@
 - `tool_runtime.rs`
   运行时共享上下文、tool-call claim、审批决策与等待。
 - `filesystem_context.rs`
-  文件系统工具的共享 helper：路径校验、diff 预览、文本读写、memory 路径处理。
+  文件系统工具的共享 helper：路径校验、diff 预览、文本读写。
 - `bash.rs` / `write_file.rs` / `edit_file.rs` / `read_*` / `search_*`
   具体工具实现。
 - `tools/mod.rs`
@@ -111,7 +109,6 @@
 
 审批策略统一在 runtime，但工具自己的业务语义仍应保留在工具内，例如：
 
-- memory 路径自动放行
 - `dry_run` 只预览不落盘
 - shell 风险标记 `risk_flags`
 - diff / preview 的具体组织方式
@@ -146,11 +143,12 @@
 5. 不要把通用逻辑复制到多个工具文件。
    能抽到 `filesystem_context.rs` 或 `tool_runtime.rs` 的，优先抽共享 helper。
 
-## Workspace 与 Memory 边界
+## Context / Profile / Memory 边界
 
-- `workspace.rs` 只处理工作区文件布局、模板安装、bootstrap prompt 拼装。
-- `memory.rs` 只处理 memory 文件扫描、切块、索引、检索、读取。
-- 工具如果要操作 memory 文件，应优先复用 `memory.rs` 和 `filesystem_context.rs` 的现有能力，不要再单独实现一套 memory 规则。
+- `workspace.rs` 只处理 agent 内部上下文目录、`AGENTS.md` 模板安装、系统 prompt 拼装。
+- `profile` 能力负责 `user` / `soul` 两类每轮注入的持久画像，不走文件系统。
+- `memory_system_*` 负责按需检索的长期记忆，不默认整库注入 prompt。
+- 工具如果要改动 `user` / `soul`，必须使用 `profile_update`；如果要改动长期记忆，必须使用 `memory_system_*`，不要再引入文件式记忆规则。
 
 ## 修改约束
 

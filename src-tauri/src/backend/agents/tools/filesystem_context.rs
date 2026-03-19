@@ -139,8 +139,6 @@ impl FilesystemToolContext {
     }
 
     /// Create or overwrite a file with approval protection.
-    ///
-    /// Memory files (`MEMORY.md` and `memory/*.md`) bypass approval.
     pub async fn write_file(
         &self,
         tool_name: &str,
@@ -1459,43 +1457,4 @@ mod tests {
         assert!(storage.list_approvals().expect("list approvals").is_empty());
     }
 
-    #[tokio::test]
-    async fn memory_paths_bypass_approval_and_trigger_sync() {
-        let dir = tempdir().expect("tempdir");
-        let (context, storage, _workspace_root) = build_test_context(&dir);
-        let tool_call_id = register_tool_call(
-            &context,
-            "write_file",
-            json!({
-                "path": "MEMORY.md",
-            }),
-        );
-
-        let payload = context
-            .write_file(
-                "write_file",
-                "MEMORY.md",
-                "hello memory",
-                Some(tool_call_id.as_str()),
-            )
-            .await
-            .expect("write memory");
-
-        assert_eq!(
-            payload
-                .get("approval_bypassed")
-                .and_then(|value| value.as_bool()),
-            Some(true)
-        );
-        assert_eq!(
-            payload
-                .get("memory_sync")
-                .and_then(|value| value.get("updated"))
-                .and_then(|value| value.as_u64()),
-            Some(1)
-        );
-
-        let hits = storage.memory_search("hello", 6, 0.01).expect("search");
-        assert!(!hits.is_empty());
-    }
 }
