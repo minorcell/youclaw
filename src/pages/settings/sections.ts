@@ -39,8 +39,8 @@ export const settingsSectionMeta: Record<SettingsSection, SettingsSectionMeta> =
     icon: SlidersHorizontal,
   },
   memory: {
-    label: '记忆文件',
-    description: '编辑 MEMORY/PROFILE 与 memory/*.md',
+    label: '画像与记忆',
+    description: '管理每轮注入的 profile，以及按需检索的长期记忆',
     icon: Bot,
   },
   providers: {

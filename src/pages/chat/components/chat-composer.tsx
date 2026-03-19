@@ -2,6 +2,8 @@ import { useRef } from 'react'
 import {
   Check,
   ChevronDown,
+  FolderOpen,
+  FolderTree,
   Loader2,
   SendHorizonal,
   Shield,
@@ -15,6 +17,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Textarea } from '@/components/ui/textarea'
@@ -22,7 +25,7 @@ import {
   labelForSessionApprovalMode,
   sessionApprovalModeOptions,
 } from '@/lib/session-approval-mode'
-import type { ProviderProfile, SessionApprovalMode } from '@/lib/types'
+import type { ProviderProfile, SessionApprovalMode, WorkspaceRootInfo } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 const IME_ENTER_GUARD_WINDOW_MS = 40
@@ -35,12 +38,17 @@ interface ChatComposerProps {
   selectedProviderId: string | null
   approvalMode: SessionApprovalMode
   approvalModeBusy: boolean
+  workspacePath: string | null
+  workspaceBusy: boolean
+  recentWorkspaces: WorkspaceRootInfo[]
   onInputChange: (value: string) => void
   onSend: () => void
   isTurnRunning: boolean
   onCancelTurn: () => void
   onBindProvider: (providerProfileId: string | null) => void
   onApprovalModeChange: (approvalMode: SessionApprovalMode) => void
+  onSelectWorkspace: (workspacePath: string) => void
+  onBrowseWorkspace: () => void
 }
 
 export function ChatComposer({
@@ -49,12 +57,17 @@ export function ChatComposer({
   selectedProviderId,
   approvalMode,
   approvalModeBusy,
+  workspacePath,
+  workspaceBusy,
+  recentWorkspaces,
   onInputChange,
   onSend,
   isTurnRunning,
   onCancelTurn,
   onBindProvider,
   onApprovalModeChange,
+  onSelectWorkspace,
+  onBrowseWorkspace,
 }: ChatComposerProps) {
   const isComposingRef = useRef(false)
   const lastCompositionEndAtRef = useRef(0)
@@ -66,6 +79,8 @@ export function ChatComposer({
     : '选择模型'
   const approvalModeLabel = labelForSessionApprovalMode(approvalMode)
   const ApprovalModeIcon = approvalMode === 'full_access' ? ShieldCheck : Shield
+  const workspaceLabel = workspacePath ? displayWorkspacePath(workspacePath) : '选择 Workspace'
+  const composerPlaceholder = workspacePath ? '输入消息...' : '先选择 workspace，再输入消息...'
 
   return (
     <Card className='rounded-2xl border border-border/70 bg-background/95 py-0 shadow-lg backdrop-blur'>
@@ -99,50 +114,100 @@ export function ChatComposer({
             if (isTurnRunning) return
             onSend()
           }}
-          placeholder='输入消息...'
+          placeholder={composerPlaceholder}
           value={input}
         />
       </div>
 
       <div className='flex min-w-0 items-center justify-between gap-3 px-3 pb-1.5'>
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger
-            className={COMPOSER_MENU_TRIGGER_CLASSNAME}
-            disabled={approvalModeBusy}
-            type='button'
-          >
-            {approvalModeBusy ? (
-              <Loader2 className='h-3.5 w-3.5 animate-spin text-muted-foreground' />
-            ) : (
-              <ApprovalModeIcon
-                className={cn(
-                  'h-3.5 w-3.5',
-                  approvalMode === 'full_access' ? 'text-destructive' : 'text-muted-foreground',
-                )}
-              />
-            )}
-            <span>{approvalModeLabel}</span>
-            <ChevronDown className='h-3.5 w-3.5 text-muted-foreground' />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='start' className='w-44 p-1'>
-            {sessionApprovalModeOptions.map((item) => (
-              <DropdownMenuItem
-                className='gap-2 py-1.5'
-                disabled={approvalModeBusy}
-                key={item.value}
-                onClick={() => onApprovalModeChange(item.value)}
-              >
+        <div className='flex min-w-0 items-center gap-1.5'>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger
+              className={cn(COMPOSER_MENU_TRIGGER_CLASSNAME, 'max-w-76')}
+              disabled={workspaceBusy || isTurnRunning}
+              title={workspacePath ?? undefined}
+              type='button'
+            >
+              {workspaceBusy ? (
+                <Loader2 className='h-3.5 w-3.5 animate-spin text-muted-foreground' />
+              ) : (
+                <FolderTree className='h-3.5 w-3.5 text-muted-foreground' />
+              )}
+              <span className='truncate'>{workspaceLabel}</span>
+              <ChevronDown className='h-3.5 w-3.5 text-muted-foreground' />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start' className='w-80 p-1'>
+              <DropdownMenuItem className='gap-2 py-1.5' onClick={onBrowseWorkspace}>
+                <FolderOpen className='h-4 w-4 text-muted-foreground' />
                 <div className='min-w-0 flex-1'>
-                  <div className='text-sm font-medium text-foreground'>{item.label}</div>
-                  <div className='text-[11px] text-muted-foreground'>{item.description}</div>
+                  <div className='text-sm font-medium text-foreground'>从系统中选择目录</div>
+                  <div className='truncate text-[11px] text-muted-foreground'>
+                    打开 Finder 选择当前 chat 的 workspace
+                  </div>
                 </div>
-                {approvalMode === item.value ? (
-                  <Check className='h-3.5 w-3.5 text-foreground' />
-                ) : null}
               </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {recentWorkspaces.length > 0 ? <DropdownMenuSeparator /> : null}
+              {recentWorkspaces.map((workspace) => (
+                <DropdownMenuItem
+                  className='gap-2 py-1.5'
+                  key={workspace.path}
+                  onClick={() => onSelectWorkspace(workspace.path)}
+                >
+                  <div className='min-w-0 flex-1'>
+                    <div className='truncate text-sm font-medium text-foreground'>
+                      {displayWorkspacePath(workspace.path)}
+                    </div>
+                    <div className='truncate text-[11px] text-muted-foreground'>
+                      {workspace.path}
+                    </div>
+                  </div>
+                  {workspace.path === workspacePath ? (
+                    <Check className='h-3.5 w-3.5 text-foreground' />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger
+              className={COMPOSER_MENU_TRIGGER_CLASSNAME}
+              disabled={approvalModeBusy}
+              type='button'
+            >
+              {approvalModeBusy ? (
+                <Loader2 className='h-3.5 w-3.5 animate-spin text-muted-foreground' />
+              ) : (
+                <ApprovalModeIcon
+                  className={cn(
+                    'h-3.5 w-3.5',
+                    approvalMode === 'full_access' ? 'text-destructive' : 'text-muted-foreground',
+                  )}
+                />
+              )}
+              <span>{approvalModeLabel}</span>
+              <ChevronDown className='h-3.5 w-3.5 text-muted-foreground' />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start' className='w-44 p-1'>
+              {sessionApprovalModeOptions.map((item) => (
+                <DropdownMenuItem
+                  className='gap-2 py-1.5'
+                  disabled={approvalModeBusy}
+                  key={item.value}
+                  onClick={() => onApprovalModeChange(item.value)}
+                >
+                  <div className='min-w-0 flex-1'>
+                    <div className='text-sm font-medium text-foreground'>{item.label}</div>
+                    <div className='text-[11px] text-muted-foreground'>{item.description}</div>
+                  </div>
+                  {approvalMode === item.value ? (
+                    <Check className='h-3.5 w-3.5 text-foreground' />
+                  ) : null}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
         <div className='flex min-w-0 items-center gap-2'>
           <DropdownMenu modal={false}>
@@ -181,6 +246,7 @@ export function ChatComposer({
                 ? 'rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90'
                 : 'rounded-full bg-primary text-primary-foreground hover:bg-primary/90'
             }
+            disabled={!workspacePath && !isTurnRunning}
             onClick={isTurnRunning ? onCancelTurn : onSend}
             size='icon'
             type='button'
@@ -195,4 +261,16 @@ export function ChatComposer({
       </div>
     </Card>
   )
+}
+
+function displayWorkspacePath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) {
+    return '选择 Workspace'
+  }
+  const parts = trimmed.split(/[\\/]/).filter(Boolean)
+  if (parts.length === 0) {
+    return trimmed
+  }
+  return parts.slice(-2).join('/')
 }

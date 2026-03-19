@@ -104,6 +104,7 @@ export function ProviderOnboardingPage() {
 
     const created = await client.request<ChatSession>('sessions.create', {
       provider_profile_id: providerProfileId,
+      workspace_path: null,
     })
     navigate(`/chat/${created.id}`)
   }

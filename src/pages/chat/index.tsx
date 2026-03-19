@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { Navigate, useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -9,7 +11,11 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
-import type { ChatMessage, ProviderProfile, SessionApprovalMode } from '@/lib/types'
+import type {
+  ChatMessage,
+  ProviderProfile,
+  SessionApprovalMode,
+} from '@/lib/types'
 import { buildTurnRenderUnits } from '@/pages/chat/adapters/build-turn-render-units'
 import { useChatScroll } from '@/pages/chat/hooks/use-chat-scroll'
 import { usePersistedTurnSteps } from '@/pages/chat/hooks/use-persisted-turn-steps'
@@ -31,6 +37,7 @@ export function ChatPage() {
     providerAccounts,
     sessions,
     approvalsById,
+    recentWorkspaces,
     lastOpenedSessionId,
     setActiveSession,
     clearError,
@@ -40,6 +47,7 @@ export function ChatPage() {
       providerAccounts: state.providerAccounts,
       sessions: state.sessions,
       approvalsById: state.approvalsById,
+      recentWorkspaces: state.recentWorkspaces,
       lastOpenedSessionId: state.lastOpenedSessionId,
       setActiveSession: state.setActiveSession,
       clearError: state.clearError,
@@ -84,6 +92,7 @@ export function ChatPage() {
 
   const [input, setInput] = useState('')
   const [approvalModeBusy, setApprovalModeBusy] = useState(false)
+  const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const persistedStepsByTurnId = usePersistedTurnSteps(activeTurnId)
 
   const activeSession = useMemo(
@@ -150,7 +159,7 @@ export function ChatPage() {
 
   async function handleSend() {
     const text = input.trim()
-    if (!text) return
+    if (!text || !activeSession?.workspace_path) return
     setInput('')
     resetAutoScroll()
     clearError()
@@ -190,6 +199,37 @@ export function ChatPage() {
       approval_id: approvalId,
       approved,
     })
+  }
+
+  async function handleWorkspaceChange(workspacePath: string) {
+    if (!activeSession || workspaceBusy) return
+    setWorkspaceBusy(true)
+    try {
+      await getAppClient().request('sessions.update_workspace', {
+        session_id: activeSession.id,
+        workspace_path: workspacePath,
+      })
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkspaceBusy(false)
+    }
+  }
+
+  async function handleBrowseWorkspace() {
+    if (!activeSession || workspaceBusy || !isTauri()) return
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: activeSession.workspace_path ?? undefined,
+      })
+      if (typeof selected === 'string' && selected.length > 0) {
+        await handleWorkspaceChange(selected)
+      }
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   async function handleCancelTurn() {
@@ -252,7 +292,12 @@ export function ChatPage() {
               onInputChange={setInput}
               onSend={() => void handleSend()}
               providers={providers}
+              recentWorkspaces={recentWorkspaces}
               selectedProviderId={activeSession.provider_profile_id}
+              workspaceBusy={workspaceBusy}
+              workspacePath={activeSession.workspace_path ?? null}
+              onBrowseWorkspace={() => void handleBrowseWorkspace()}
+              onSelectWorkspace={(path) => void handleWorkspaceChange(path)}
               isTurnRunning={isTurnRunning}
             />
           </div>

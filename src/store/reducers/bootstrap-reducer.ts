@@ -20,6 +20,7 @@ export function reduceBootstrapEnvelope(
     initialized: true,
     providerAccounts: payload.provider_accounts ?? [],
     sessions: payload.sessions,
+    recentWorkspaces: payload.recent_workspaces ?? [],
     messagesBySession: groupMessages(payload.messages),
     approvalsById: Object.fromEntries(payload.approvals.map((approval) => [approval.id, approval])),
     turnsById: buildTurnMapFromBootstrap(payload),
