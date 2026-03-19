@@ -1,4 +1,5 @@
 mod memory;
+mod profile;
 mod providers;
 mod schema;
 mod sessions;
@@ -26,8 +27,8 @@ use crate::backend::models::requests::{
     UsageSummaryRequest,
 };
 use crate::backend::models::responses::{
-    ArchivedSessionsPayload, BootstrapPayload, MemoryReindexPayload, MemorySearchHit,
-    SessionsChangedPayload,
+    ArchivedSessionsPayload, BootstrapPayload, MemoryRecordSummary, MemorySystemSearchHit,
+    SessionsChangedPayload, WorkspaceRootInfo,
 };
 use crate::backend::models::{
     UsageLogDetailPayload, UsageLogItem, UsageLogsPayload, UsageModelStatsItem,
@@ -50,37 +51,6 @@ struct StorageInner {
 
 const DEFAULT_USAGE_PAGE_SIZE: u32 = 20;
 const MAX_USAGE_PAGE_SIZE: u32 = 100;
-
-#[derive(Debug, Clone)]
-pub struct MemoryChunkInput {
-    pub id: String,
-    pub path: String,
-    pub line_start: u32,
-    pub line_end: u32,
-    pub heading: Option<String>,
-    pub content: String,
-    pub file_hash: String,
-    pub source: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemorySourceFileInput {
-    pub path: String,
-    pub file_hash: String,
-    pub file_size: u64,
-    pub mtime_ms: i64,
-    pub indexed_at: String,
-    pub source: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemorySourceFileRecord {
-    pub path: String,
-    pub file_hash: String,
-    pub file_size: u64,
-    pub mtime_ms: i64,
-    pub source: String,
-}
 
 impl StorageService {
     pub fn new(base_dir: PathBuf) -> AppResult<Self> {
@@ -105,12 +75,12 @@ impl StorageService {
             provider_profiles: flatten_provider_profiles(&provider_accounts),
             provider_accounts,
             sessions: self.list_sessions()?,
+            recent_workspaces: self.list_recent_workspaces(12)?,
             messages: self.list_messages()?,
             approvals: self.list_approvals()?,
             turns: self.list_turns()?,
             last_opened_session_id: self.get_last_opened_session_id()?,
             agent_config: self.get_agent_config()?,
-            workspace_files: Vec::new(),
         })
     }
 

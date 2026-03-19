@@ -52,6 +52,7 @@ libc = "0.2"
 uuid = { version = "1", features = ["serde", "v4"] }
 tiktoken-rs = "0.9.1"
 tauri-plugin-autostart = "2.5.1"
+tauri-plugin-dialog = "2.4.3"
 tauri-plugin-notification = "2.3.3"
 
 [dev-dependencies]

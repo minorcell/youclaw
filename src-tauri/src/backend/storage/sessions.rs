@@ -6,7 +6,7 @@ impl StorageService {
     pub fn find_latest_empty_session(&self) -> AppResult<Option<ChatSession>> {
         let conn = self.open_connection()?;
         conn.query_row(
-            "SELECT s.id, s.title, s.provider_profile_id, s.approval_mode, s.created_at, s.updated_at, s.last_turn_at, s.archived_at
+            "SELECT s.id, s.title, s.provider_profile_id, s.workspace_path, s.approval_mode, s.created_at, s.updated_at, s.last_turn_at, s.archived_at
              FROM chat_sessions s
              WHERE s.archived_at IS NULL
                AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.session_id = s.id)
@@ -14,19 +14,7 @@ impl StorageService {
              ORDER BY COALESCE(s.last_turn_at, s.updated_at) DESC, s.created_at DESC
              LIMIT 1",
             [],
-            |row| {
-                let approval_mode_raw = row.get::<_, String>(3)?;
-                Ok(ChatSession {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    provider_profile_id: row.get(2)?,
-                    approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
-                    last_turn_at: row.get(6)?,
-                    archived_at: row.get(7)?,
-                })
-            },
+            read_chat_session,
         )
         .optional()
         .map_err(Into::into)
@@ -35,71 +23,35 @@ impl StorageService {
     pub fn list_sessions(&self) -> AppResult<Vec<ChatSession>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+            "SELECT id, title, provider_profile_id, workspace_path, approval_mode, created_at, updated_at, last_turn_at, archived_at
              FROM chat_sessions
              WHERE archived_at IS NULL
              ORDER BY COALESCE(last_turn_at, updated_at) DESC, created_at DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            let approval_mode_raw = row.get::<_, String>(3)?;
-            Ok(ChatSession {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                provider_profile_id: row.get(2)?,
-                approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                last_turn_at: row.get(6)?,
-                archived_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map([], read_chat_session)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn list_archived_sessions(&self) -> AppResult<Vec<ChatSession>> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+            "SELECT id, title, provider_profile_id, workspace_path, approval_mode, created_at, updated_at, last_turn_at, archived_at
              FROM chat_sessions
              WHERE archived_at IS NOT NULL
              ORDER BY archived_at DESC, COALESCE(last_turn_at, updated_at) DESC, created_at DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            let approval_mode_raw = row.get::<_, String>(3)?;
-            Ok(ChatSession {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                provider_profile_id: row.get(2)?,
-                approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                last_turn_at: row.get(6)?,
-                archived_at: row.get(7)?,
-            })
-        })?;
+        let rows = stmt.query_map([], read_chat_session)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn get_session(&self, session_id: &str) -> AppResult<ChatSession> {
         let conn = self.open_connection()?;
         conn.query_row(
-            "SELECT id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+            "SELECT id, title, provider_profile_id, workspace_path, approval_mode, created_at, updated_at, last_turn_at, archived_at
              FROM chat_sessions
              WHERE id = ?1 AND archived_at IS NULL",
             [session_id],
-            |row| {
-                let approval_mode_raw = row.get::<_, String>(3)?;
-                Ok(ChatSession {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    provider_profile_id: row.get(2)?,
-                    approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 3)?,
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
-                    last_turn_at: row.get(6)?,
-                    archived_at: row.get(7)?,
-                })
-            },
+            read_chat_session,
         )
         .optional()?
         .ok_or_else(|| AppError::NotFound(format!("session `{session_id}`")))
@@ -109,13 +61,14 @@ impl StorageService {
         let conn = self.open_connection()?;
         conn.execute(
             "INSERT INTO chat_sessions (
-                id, title, provider_profile_id, approval_mode, created_at, updated_at, last_turn_at, archived_at
+                id, title, provider_profile_id, workspace_path, approval_mode, created_at, updated_at, last_turn_at, archived_at
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 session.id,
                 session.title,
                 session.provider_profile_id,
+                session.workspace_path,
                 session.approval_mode.as_str(),
                 session.created_at,
                 session.updated_at,
@@ -141,6 +94,26 @@ impl StorageService {
         if updated == 0 {
             return Err(AppError::NotFound(format!("session `{session_id}`")));
         }
+        Ok(())
+    }
+
+    pub fn update_session_workspace(&self, session_id: &str, workspace_path: &str) -> AppResult<()> {
+        let conn = self.open_connection()?;
+        let now = now_timestamp();
+        let updated = conn.execute(
+            "UPDATE chat_sessions
+             SET workspace_path = ?2, updated_at = ?3
+             WHERE id = ?1 AND archived_at IS NULL",
+            params![session_id, workspace_path, now],
+        )?;
+        if updated == 0 {
+            return Err(AppError::NotFound(format!("session `{session_id}`")));
+        }
+        conn.execute(
+            "INSERT INTO workspace_roots (path, last_used_at) VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET last_used_at = excluded.last_used_at",
+            params![workspace_path, now],
+        )?;
         Ok(())
     }
 
@@ -183,6 +156,23 @@ impl StorageService {
             return Err(AppError::NotFound(format!("session `{session_id}`")));
         }
         Ok(())
+    }
+
+    pub fn list_recent_workspaces(&self, limit: u32) -> AppResult<Vec<WorkspaceRootInfo>> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT path, last_used_at
+             FROM workspace_roots
+             ORDER BY last_used_at DESC, path ASC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit.clamp(1, 64) as i64], |row| {
+            Ok(WorkspaceRootInfo {
+                path: row.get(0)?,
+                last_used_at: row.get(1)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn touch_session_for_turn(&self, session_id: &str, title: Option<&str>) -> AppResult<()> {
@@ -831,6 +821,7 @@ impl StorageService {
         Ok(SessionsChangedPayload {
             sessions: self.list_sessions()?,
             last_opened_session_id: self.get_last_opened_session_id()?,
+            recent_workspaces: self.list_recent_workspaces(12)?,
         })
     }
 
@@ -839,6 +830,21 @@ impl StorageService {
             sessions: self.list_archived_sessions()?,
         })
     }
+}
+
+fn read_chat_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSession> {
+    let approval_mode_raw = row.get::<_, String>(4)?;
+    Ok(ChatSession {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        provider_profile_id: row.get(2)?,
+        workspace_path: row.get(3)?,
+        approval_mode: parse_session_approval_mode_column(&approval_mode_raw, 4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+        last_turn_at: row.get(7)?,
+        archived_at: row.get(8)?,
+    })
 }
 
 fn parse_message_role_column(value: &str, column: usize) -> rusqlite::Result<MessageRole> {

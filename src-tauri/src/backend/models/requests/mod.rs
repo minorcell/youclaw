@@ -8,13 +8,14 @@ pub use provider::{
     TestProviderModelRequest, UpdateProviderModelRequest, UpdateProviderRequest,
 };
 pub use runtime::{
-    AgentConfigUpdateRequest, MemoryGetRequest, MemorySearchRequest, TurnStepsListRequest,
-    WorkspaceFileReadRequest, WorkspaceFileWriteRequest,
+    AgentConfigUpdateRequest, MemorySystemDeleteRequest, MemorySystemGetRequest,
+    MemorySystemListRequest, MemorySystemSearchRequest, MemorySystemUpsertRequest,
+    ProfileGetRequest, ProfileUpdateRequest, TurnStepsListRequest,
 };
 pub use session::{
     BindSessionProviderRequest, ChatTurnCancelRequest, ChatTurnStartRequest, CreateSessionRequest,
     DeleteSessionRequest, PurgeSessionRequest, RenameSessionRequest, RestoreSessionRequest,
-    ToolApprovalResolveRequest, UpdateSessionApprovalModeRequest,
+    ToolApprovalResolveRequest, UpdateSessionApprovalModeRequest, UpdateSessionWorkspaceRequest,
 };
 pub use usage::{
     UsageLogDetailRequest, UsageLogsListRequest, UsageStatsListRequest, UsageSummaryRequest,

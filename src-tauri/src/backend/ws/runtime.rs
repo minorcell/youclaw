@@ -1,7 +1,8 @@
 use crate::backend::errors::AppResult;
 use crate::backend::models::requests::{
-    AgentConfigUpdateRequest, MemoryGetRequest, MemorySearchRequest, WorkspaceFileReadRequest,
-    WorkspaceFileWriteRequest,
+    AgentConfigUpdateRequest, MemorySystemDeleteRequest, MemorySystemGetRequest,
+    MemorySystemListRequest, MemorySystemSearchRequest, MemorySystemUpsertRequest,
+    ProfileGetRequest, ProfileUpdateRequest,
 };
 use crate::backend::models::WsEnvelope;
 use crate::backend::BackendState;
@@ -24,49 +25,65 @@ pub(super) fn try_handle(
                 state.runtime_service().update_agent_config(req)?,
             )?
         }
-        "agent.workspace.files.list" => WsEnvelope::response_ok(
-            envelope.id.clone(),
-            envelope.name.clone(),
-            state.workspace_service().list_files()?,
-        )?,
-        "agent.workspace.files.read" => {
-            let req = serde_json::from_value::<WorkspaceFileReadRequest>(envelope.payload.clone())?;
+        "agent.profile.get" => {
+            let req = serde_json::from_value::<ProfileGetRequest>(envelope.payload.clone())?;
             WsEnvelope::response_ok(
                 envelope.id.clone(),
                 envelope.name.clone(),
-                state.workspace_service().read_file(req)?,
+                state.profile_service().get(req)?,
             )?
         }
-        "agent.workspace.files.write" => {
+        "agent.profile.update" => {
+            let req = serde_json::from_value::<ProfileUpdateRequest>(envelope.payload.clone())?;
+            WsEnvelope::response_ok(
+                envelope.id.clone(),
+                envelope.name.clone(),
+                state.profile_service().update(req)?,
+            )?
+        }
+        "agent.memory_system.list" => {
+            let req = serde_json::from_value::<MemorySystemListRequest>(envelope.payload.clone())?;
+            WsEnvelope::response_ok(
+                envelope.id.clone(),
+                envelope.name.clone(),
+                state.memory_service().list(req)?,
+            )?
+        }
+        "agent.memory_system.search" => {
             let req =
-                serde_json::from_value::<WorkspaceFileWriteRequest>(envelope.payload.clone())?;
-            WsEnvelope::response_ok(
-                envelope.id.clone(),
-                envelope.name.clone(),
-                state.workspace_service().write_file(req)?,
-            )?
-        }
-        "agent.memory.search" => {
-            let req = serde_json::from_value::<MemorySearchRequest>(envelope.payload.clone())?;
+                serde_json::from_value::<MemorySystemSearchRequest>(envelope.payload.clone())?;
             WsEnvelope::response_ok(
                 envelope.id.clone(),
                 envelope.name.clone(),
                 state.memory_service().search(req)?,
             )?
         }
-        "agent.memory.get" => {
-            let req = serde_json::from_value::<MemoryGetRequest>(envelope.payload.clone())?;
+        "agent.memory_system.get" => {
+            let req = serde_json::from_value::<MemorySystemGetRequest>(envelope.payload.clone())?;
             WsEnvelope::response_ok(
                 envelope.id.clone(),
                 envelope.name.clone(),
                 state.memory_service().get(req)?,
             )?
         }
-        "agent.memory.reindex" => WsEnvelope::response_ok(
-            envelope.id.clone(),
-            envelope.name.clone(),
-            state.memory_service().reindex()?,
-        )?,
+        "agent.memory_system.upsert" => {
+            let req =
+                serde_json::from_value::<MemorySystemUpsertRequest>(envelope.payload.clone())?;
+            WsEnvelope::response_ok(
+                envelope.id.clone(),
+                envelope.name.clone(),
+                state.memory_service().upsert(req)?,
+            )?
+        }
+        "agent.memory_system.delete" => {
+            let req =
+                serde_json::from_value::<MemorySystemDeleteRequest>(envelope.payload.clone())?;
+            WsEnvelope::response_ok(
+                envelope.id.clone(),
+                envelope.name.clone(),
+                state.memory_service().delete(req)?,
+            )?
+        }
         _ => return Ok(None),
     };
     Ok(Some(response))

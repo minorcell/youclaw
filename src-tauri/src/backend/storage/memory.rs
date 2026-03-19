@@ -1,124 +1,124 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use rusqlite::Transaction;
+use uuid::Uuid;
 
 use super::*;
+use crate::backend::models::domain::MemoryRecord;
+
+const DEFAULT_MEMORY_LIST_LIMIT: u32 = 64;
+const MAX_MEMORY_LIST_LIMIT: u32 = 200;
 
 impl StorageService {
-    pub fn list_memory_source_files(&self) -> AppResult<HashMap<String, MemorySourceFileRecord>> {
+    pub fn list_memory_entries(&self, limit: Option<u32>) -> AppResult<Vec<MemoryRecordSummary>> {
+        let limit = limit
+            .unwrap_or(DEFAULT_MEMORY_LIST_LIMIT)
+            .clamp(1, MAX_MEMORY_LIST_LIMIT);
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT path, file_hash, file_size, mtime_ms, source
-             FROM memory_source_files",
+            "SELECT id, title, content, updated_at
+             FROM memory_entries
+             ORDER BY updated_at DESC, created_at DESC
+             LIMIT ?1",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(MemorySourceFileRecord {
-                path: row.get::<_, String>(0)?,
-                file_hash: row.get::<_, String>(1)?,
-                file_size: row.get::<_, i64>(2)?.max(0) as u64,
-                mtime_ms: row.get::<_, i64>(3)?,
-                source: row.get::<_, String>(4)?,
+        let rows = stmt.query_map([limit as i64], |row| {
+            let content = row.get::<_, String>(2)?;
+            Ok(MemoryRecordSummary {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                preview: preview_text(&content, 120),
+                updated_at: row.get(3)?,
             })
         })?;
-
-        let mut map = HashMap::new();
-        for row in rows {
-            let entry = row?;
-            map.insert(entry.path.clone(), entry);
-        }
-        Ok(map)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn sync_memory_chunks(
+    pub fn get_memory_entry(&self, id: &str) -> AppResult<MemoryRecord> {
+        let conn = self.open_connection()?;
+        conn.query_row(
+            "SELECT id, title, content, created_at, updated_at
+             FROM memory_entries
+             WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(MemoryRecord {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound(format!("memory entry `{id}`")))
+    }
+
+    pub fn upsert_memory_entry(
         &self,
-        updated_files: &[MemorySourceFileInput],
-        deleted_paths: &[String],
-        chunks: &[MemoryChunkInput],
-        scanned_files: u32,
-    ) -> AppResult<MemoryReindexPayload> {
+        id: Option<&str>,
+        title: &str,
+        content: &str,
+    ) -> AppResult<(MemoryRecord, bool)> {
         let conn = self.open_connection()?;
         let tx = conn.unchecked_transaction()?;
+        let now = now_timestamp();
+        let entry_id = id
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let created_at = tx
+            .query_row(
+                "SELECT created_at FROM memory_entries WHERE id = ?1",
+                [entry_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| now.clone());
+        let created = created_at == now;
 
-        for path in deleted_paths {
-            delete_chunks_for_path(&tx, path)?;
-            tx.execute(
-                "DELETE FROM memory_source_files WHERE path = ?1",
-                params![path],
-            )?;
-        }
-
-        for file in updated_files {
-            delete_chunks_for_path(&tx, &file.path)?;
-        }
-
-        for chunk in chunks {
-            tx.execute(
-                "INSERT INTO memory_chunks (
-                    id, path, line_start, line_end, heading, content, file_hash, source, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    chunk.id,
-                    chunk.path,
-                    chunk.line_start as i64,
-                    chunk.line_end as i64,
-                    chunk.heading,
-                    chunk.content,
-                    chunk.file_hash,
-                    chunk.source,
-                    now_timestamp(),
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO memory_chunks_fts (id, path, heading, content)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    chunk.id,
-                    chunk.path,
-                    chunk.heading.as_deref().unwrap_or_default(),
-                    chunk.content
-                ],
-            )?;
-        }
-
-        for file in updated_files {
-            tx.execute(
-                "INSERT INTO memory_source_files (
-                    path, file_hash, file_size, mtime_ms, indexed_at, source
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(path) DO UPDATE SET
-                    file_hash = excluded.file_hash,
-                    file_size = excluded.file_size,
-                    mtime_ms = excluded.mtime_ms,
-                    indexed_at = excluded.indexed_at,
-                    source = excluded.source",
-                params![
-                    file.path,
-                    file.file_hash,
-                    file.file_size as i64,
-                    file.mtime_ms,
-                    file.indexed_at,
-                    file.source,
-                ],
-            )?;
-        }
-
+        tx.execute(
+            "INSERT INTO memory_entries (id, title, content, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content,
+                updated_at = excluded.updated_at",
+            params![entry_id, title, content, created_at, now],
+        )?;
+        tx.execute("DELETE FROM memory_entries_fts WHERE id = ?1", [entry_id.as_str()])?;
+        tx.execute(
+            "INSERT INTO memory_entries_fts (id, title, content) VALUES (?1, ?2, ?3)",
+            params![entry_id, title, content],
+        )?;
         tx.commit()?;
 
-        Ok(MemoryReindexPayload {
-            scanned: scanned_files,
-            updated: updated_files.len() as u32,
-            deleted: deleted_paths.len() as u32,
-            chunks_indexed: chunks.len() as u32,
-        })
+        Ok((
+            MemoryRecord {
+                id: entry_id,
+                title: title.to_string(),
+                content: content.to_string(),
+                created_at,
+                updated_at: now,
+            },
+            created,
+        ))
     }
 
-    pub fn memory_search(
+    pub fn delete_memory_entry(&self, id: &str) -> AppResult<bool> {
+        let conn = self.open_connection()?;
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM memory_entries_fts WHERE id = ?1", [id])?;
+        let deleted = tx.execute("DELETE FROM memory_entries WHERE id = ?1", [id])? > 0;
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    pub fn search_memory_entries(
         &self,
         query: &str,
         max_results: u32,
         min_score: f32,
-    ) -> AppResult<Vec<MemorySearchHit>> {
+    ) -> AppResult<Vec<MemorySystemSearchHit>> {
         let query = query.trim();
         let normalized_query = build_fts_query(query)?;
         let max_results = max_results.clamp(1, 100);
@@ -127,36 +127,25 @@ impl StorageService {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
             "SELECT
-                c.path,
-                c.line_start,
-                c.line_end,
-                snippet(memory_chunks_fts, 3, '[', ']', '...', 24) AS snippet,
-                bm25(memory_chunks_fts) AS rank
-             FROM memory_chunks_fts
-             JOIN memory_chunks c ON c.id = memory_chunks_fts.id
-             WHERE memory_chunks_fts MATCH ?1
+                e.id,
+                e.title,
+                snippet(memory_entries_fts, 2, '[', ']', '...', 24) AS snippet,
+                bm25(memory_entries_fts) AS rank
+             FROM memory_entries_fts
+             JOIN memory_entries e ON e.id = memory_entries_fts.id
+             WHERE memory_entries_fts MATCH ?1
              ORDER BY rank ASC
              LIMIT ?2",
         )?;
 
         let rows = stmt.query_map(params![normalized_query, max_results as i64], |row| {
-            let rank = row.get::<_, f64>(4).unwrap_or(1000.0).abs() as f32;
+            let rank = row.get::<_, f64>(3).unwrap_or(1000.0).abs() as f32;
             let score = 1.0 / (1.0 + rank);
-            let path = row.get::<_, String>(0)?;
-            let start_line = row.get::<_, i64>(1)?.max(0) as u32;
-            let end_line = row.get::<_, i64>(2)?.max(0) as u32;
-            let citation = if start_line == end_line {
-                Some(format!("{path}#L{start_line}"))
-            } else {
-                Some(format!("{path}#L{start_line}-L{end_line}"))
-            };
-            Ok(MemorySearchHit {
-                path,
-                start_line,
-                end_line,
-                snippet: row.get::<_, String>(3).unwrap_or_default(),
+            Ok(MemorySystemSearchHit {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                snippet: row.get::<_, String>(2).unwrap_or_default(),
                 score,
-                citation,
             })
         })?;
 
@@ -178,16 +167,16 @@ impl StorageService {
         }
 
         let fallback_hits =
-            self.memory_search_with_substring(&substring_terms, max_results, min_score)?;
+            self.search_memory_entries_with_substring(&substring_terms, max_results, min_score)?;
         Ok(merge_search_hits(hits, fallback_hits, max_results as usize))
     }
 
-    fn memory_search_with_substring(
+    fn search_memory_entries_with_substring(
         &self,
         terms: &[String],
         max_results: u32,
         min_score: f32,
-    ) -> AppResult<Vec<MemorySearchHit>> {
+    ) -> AppResult<Vec<MemorySystemSearchHit>> {
         if terms.is_empty() {
             return Ok(Vec::new());
         }
@@ -195,43 +184,33 @@ impl StorageService {
         let scan_limit = ((max_results as i64) * 120).clamp(300, 2_000);
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT
-                path,
-                line_start,
-                line_end,
-                content
-             FROM memory_chunks
+            "SELECT id, title, content
+             FROM memory_entries
              ORDER BY updated_at DESC
              LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![scan_limit], |row| {
-            let path = row.get::<_, String>(0)?;
-            let start_line = row.get::<_, i64>(1)?.max(0) as u32;
-            let end_line = row.get::<_, i64>(2)?.max(0) as u32;
-            let content = row.get::<_, String>(3).unwrap_or_default();
-            Ok((path, start_line, end_line, content))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?;
 
         let mut hits = Vec::new();
         for row in rows {
-            let (path, start_line, end_line, content) = row?;
-            let scored = score_content_by_terms(&content, terms);
+            let (id, title, content) = row?;
+            let combined = format!("{title}\n{content}");
+            let scored = score_content_by_terms(&combined, terms);
             if scored.score < min_score {
                 continue;
             }
-            let citation = if start_line == end_line {
-                Some(format!("{path}#L{start_line}"))
-            } else {
-                Some(format!("{path}#L{start_line}-L{end_line}"))
-            };
-            hits.push(MemorySearchHit {
-                path,
-                start_line,
-                end_line,
-                snippet: build_snippet(&content, scored.first_match_byte),
+            hits.push(MemorySystemSearchHit {
+                id,
+                title,
+                snippet: build_snippet(&combined, scored.first_match_byte),
                 score: scored.score,
-                citation,
             });
         }
 
@@ -239,22 +218,12 @@ impl StorageService {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(Ordering::Equal)
-                .then_with(|| a.path.cmp(&b.path))
-                .then_with(|| a.start_line.cmp(&b.start_line))
+                .then_with(|| a.title.cmp(&b.title))
+                .then_with(|| a.id.cmp(&b.id))
         });
         hits.truncate(max_results as usize);
         Ok(hits)
     }
-}
-
-fn delete_chunks_for_path(tx: &Transaction<'_>, path: &str) -> AppResult<()> {
-    tx.execute(
-        "DELETE FROM memory_chunks_fts
-         WHERE id IN (SELECT id FROM memory_chunks WHERE path = ?1)",
-        params![path],
-    )?;
-    tx.execute("DELETE FROM memory_chunks WHERE path = ?1", params![path])?;
-    Ok(())
 }
 
 pub(super) fn build_fts_query(query: &str) -> AppResult<String> {
@@ -284,26 +253,25 @@ pub(super) fn build_fts_query(query: &str) -> AppResult<String> {
 }
 
 fn merge_search_hits(
-    primary: Vec<MemorySearchHit>,
-    fallback: Vec<MemorySearchHit>,
+    primary: Vec<MemorySystemSearchHit>,
+    fallback: Vec<MemorySystemSearchHit>,
     max_results: usize,
-) -> Vec<MemorySearchHit> {
-    let mut merged = HashMap::<(String, u32, u32), MemorySearchHit>::new();
+) -> Vec<MemorySystemSearchHit> {
+    let mut merged = std::collections::HashMap::<String, MemorySystemSearchHit>::new();
     for hit in primary.into_iter().chain(fallback.into_iter()) {
-        let key = (hit.path.clone(), hit.start_line, hit.end_line);
-        if let Some(existing) = merged.get_mut(&key) {
+        if let Some(existing) = merged.get_mut(&hit.id) {
             if hit.score > existing.score {
                 existing.score = hit.score;
             }
             if existing.snippet.is_empty() && !hit.snippet.is_empty() {
                 existing.snippet = hit.snippet;
             }
-            if existing.citation.is_none() {
-                existing.citation = hit.citation;
+            if existing.title.is_empty() && !hit.title.is_empty() {
+                existing.title = hit.title;
             }
             continue;
         }
-        merged.insert(key, hit);
+        merged.insert(hit.id.clone(), hit);
     }
 
     let mut hits = merged.into_values().collect::<Vec<_>>();
@@ -311,8 +279,8 @@ fn merge_search_hits(
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| a.path.cmp(&b.path))
-            .then_with(|| a.start_line.cmp(&b.start_line))
+            .then_with(|| a.title.cmp(&b.title))
+            .then_with(|| a.id.cmp(&b.id))
     });
     hits.truncate(max_results);
     hits
@@ -409,11 +377,7 @@ fn score_content_by_terms(content: &str, terms: &[String]) -> ScoredContentMatch
         }
     }
 
-    let score = if terms.is_empty() {
-        0.0
-    } else {
-        matched as f32 / terms.len() as f32
-    };
+    let score = matched as f32 / terms.len() as f32;
 
     ScoredContentMatch {
         score,
@@ -452,6 +416,16 @@ fn build_snippet(content: &str, first_match_byte: Option<usize>) -> String {
     snippet
 }
 
+fn preview_text(content: &str, max_chars: usize) -> String {
+    let normalized = content.replace('\n', " ").trim().to_string();
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let mut preview = normalized.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    preview.push_str("...");
+    preview
+}
+
 fn contains_cjk(value: &str) -> bool {
     value.chars().any(is_cjk_char)
 }
@@ -474,48 +448,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_substring_terms_for_cjk_queries() {
-        let terms = build_substring_terms("学习习惯总结");
-        assert!(terms.contains(&"学习习惯总结".to_string()));
-        assert!(terms.contains(&"学习".to_string()));
-        assert!(terms.contains(&"习惯".to_string()));
-        assert!(terms.contains(&"总结".to_string()));
-    }
-
-    #[test]
-    fn memory_search_falls_back_to_substring_for_cjk() {
+    fn upsert_and_search_memory_entries() {
         let dir = tempdir().expect("tempdir");
         let storage = StorageService::new(dir.path().join("state")).expect("storage");
 
-        storage
-            .sync_memory_chunks(
-                &[MemorySourceFileInput {
-                    path: "MEMORY.md".to_string(),
-                    file_hash: "hash-1".to_string(),
-                    file_size: 42,
-                    mtime_ms: 1,
-                    indexed_at: now_timestamp(),
-                    source: "memory".to_string(),
-                }],
-                &[],
-                &[MemoryChunkInput {
-                    id: "chunk-1".to_string(),
-                    path: "MEMORY.md".to_string(),
-                    line_start: 1,
-                    line_end: 3,
-                    heading: None,
-                    content: "今天继续学习习惯总结，保持长期复盘。".to_string(),
-                    file_hash: "hash-1".to_string(),
-                    source: "memory".to_string(),
-                }],
-                1,
-            )
-            .expect("sync");
+        let (entry, created) = storage
+            .upsert_memory_entry(None, "习惯总结", "今天继续学习习惯总结，保持长期复盘。")
+            .expect("upsert");
+        assert!(created);
 
         let hits = storage
-            .memory_search("学习 习惯 总结", 6, 0.2)
+            .search_memory_entries("学习 习惯 总结", 6, 0.2)
             .expect("search");
-        assert!(!hits.is_empty());
-        assert_eq!(hits[0].path, "MEMORY.md");
+        assert_eq!(hits[0].id, entry.id);
+        assert_eq!(hits[0].title, "习惯总结");
+    }
+
+    #[test]
+    fn list_memory_entries_orders_by_updated_at() {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+
+        let (first, _) = storage
+            .upsert_memory_entry(None, "A", "alpha")
+            .expect("first");
+        let _ = storage
+            .upsert_memory_entry(Some(first.id.as_str()), "A2", "alpha2")
+            .expect("update");
+        let _ = storage
+            .upsert_memory_entry(None, "B", "beta")
+            .expect("second");
+
+        let entries = storage.list_memory_entries(Some(10)).expect("list");
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn delete_memory_entry_removes_record() {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+        let (entry, _) = storage
+            .upsert_memory_entry(None, "A", "alpha")
+            .expect("create");
+
+        assert!(storage.delete_memory_entry(&entry.id).expect("delete"));
+        assert!(!storage.delete_memory_entry(&entry.id).expect("delete again"));
     }
 }

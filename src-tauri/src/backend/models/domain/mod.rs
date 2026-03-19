@@ -1,3 +1,5 @@
+pub use super::memory::MemoryRecord;
+pub use super::profile::{AgentProfile, ProfileTarget};
 pub use super::common::{now_timestamp, MessageRole, TurnStatus};
 pub use super::config::AgentConfigPayload;
 pub use super::provider::{

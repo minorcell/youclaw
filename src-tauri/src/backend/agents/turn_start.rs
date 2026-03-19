@@ -3,7 +3,7 @@ use crate::backend::models::domain::{
     new_chat_turn, new_user_chat_message, title_from_first_prompt,
 };
 use crate::backend::models::events::TurnStartedPayload;
-use crate::backend::BackendState;
+use crate::backend::{AppError, BackendState};
 
 pub(super) fn start_turn(
     state: BackendState,
@@ -13,6 +13,14 @@ pub(super) fn start_turn(
     let provider_service = state.provider_service();
     let session_service = state.session_service();
     let session = state.storage.get_session(&session_id)?;
+    let workspace_path = session.workspace_path.as_deref().ok_or_else(|| {
+        AppError::Validation("session has no bound workspace".to_string())
+    })?;
+    if !std::path::Path::new(workspace_path).is_dir() {
+        return Err(AppError::Validation(format!(
+            "workspace path is not available: {workspace_path}"
+        )));
+    }
     let title = if session.title == "New chat" {
         Some(title_from_first_prompt(&text))
     } else {
