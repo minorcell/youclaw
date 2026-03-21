@@ -7,9 +7,10 @@ use crate::backend::errors::AppError;
 use crate::backend::errors::AppResult;
 use crate::backend::models::domain::AgentProfile;
 
-const AGENTS_FILE_NAME: &str = "AGENTS.md";
+const LEGACY_PROMPT_FILE_NAME: &str = "AGENTS.md";
+const SYSTEM_PROMPT_FILE_NAME: &str = "SYSTEM_PROMPT.md";
 
-const ZH_AGENTS_TEMPLATE: &str = include_str!("prompts/templates/AGENTS.md");
+const ZH_SYSTEM_PROMPT_TEMPLATE: &str = include_str!("prompts/templates/SYSTEM_PROMPT.md");
 
 #[derive(Clone, Debug)]
 pub struct AgentWorkspace {
@@ -31,9 +32,15 @@ impl AgentWorkspace {
     pub fn install_templates(&self) -> AppResult<Vec<String>> {
         self.ensure_layout()?;
 
-        let target = self.root.join(AGENTS_FILE_NAME);
-        fs::write(&target, ZH_AGENTS_TEMPLATE)?;
-        Ok(vec![AGENTS_FILE_NAME.to_string()])
+        let target = self.root.join(SYSTEM_PROMPT_FILE_NAME);
+        fs::write(&target, ZH_SYSTEM_PROMPT_TEMPLATE)?;
+
+        let legacy_target = self.root.join(LEGACY_PROMPT_FILE_NAME);
+        if legacy_target.exists() {
+            fs::remove_file(legacy_target)?;
+        }
+
+        Ok(vec![SYSTEM_PROMPT_FILE_NAME.to_string()])
     }
 
     #[cfg(test)]
@@ -52,8 +59,8 @@ impl AgentWorkspace {
         profiles: &[AgentProfile],
     ) -> AppResult<String> {
         self.ensure_layout()?;
-        let agents_path = self.root.join(AGENTS_FILE_NAME);
-        prompt::build_system_prompt(&agents_path, project_workspace_root, profiles)
+        let system_prompt_path = self.root.join(SYSTEM_PROMPT_FILE_NAME);
+        prompt::build_system_prompt(&system_prompt_path, project_workspace_root, profiles)
     }
 
     #[cfg(test)]
@@ -117,7 +124,7 @@ fn is_allowed_workspace_path(path: &Path) -> bool {
         })
         .collect::<Vec<_>>();
 
-    matches!(components.as_slice(), [name] if name == AGENTS_FILE_NAME)
+    matches!(components.as_slice(), [name] if name == SYSTEM_PROMPT_FILE_NAME)
 }
 
 #[cfg(test)]
@@ -126,7 +133,9 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{AgentWorkspace, ZH_AGENTS_TEMPLATE};
+    use super::{
+        AgentWorkspace, LEGACY_PROMPT_FILE_NAME, SYSTEM_PROMPT_FILE_NAME, ZH_SYSTEM_PROMPT_TEMPLATE,
+    };
     use crate::backend::models::domain::{AgentProfile, ProfileTarget};
 
     fn profile(target: ProfileTarget, content: &str) -> AgentProfile {
@@ -139,16 +148,21 @@ mod tests {
     }
 
     #[test]
-    fn installs_agents_template_when_missing() {
+    fn installs_system_prompt_template_when_missing() {
         let dir = tempdir().expect("tempdir");
         let workspace = AgentWorkspace::new(dir.path());
         let copied = workspace.install_templates().expect("install");
-        assert_eq!(copied, vec!["AGENTS.md".to_string()]);
-        assert!(dir.path().join("workspace").join("AGENTS.md").is_file());
+        assert_eq!(copied, vec![SYSTEM_PROMPT_FILE_NAME.to_string()]);
+        assert!(
+            dir.path()
+                .join("workspace")
+                .join(SYSTEM_PROMPT_FILE_NAME)
+                .is_file()
+        );
     }
 
     #[test]
-    fn build_system_prompt_errors_when_agents_missing() {
+    fn build_system_prompt_errors_when_prompt_file_missing() {
         let dir = tempdir().expect("tempdir");
         let workspace = AgentWorkspace::new(dir.path());
         workspace.ensure_layout().expect("layout");
@@ -162,8 +176,8 @@ mod tests {
         let workspace = AgentWorkspace::new(dir.path());
         workspace.ensure_layout().expect("layout");
         workspace
-            .write_workspace_file("AGENTS.md", "---\nname: a\n---\nA")
-            .expect("write agents");
+            .write_workspace_file(SYSTEM_PROMPT_FILE_NAME, "---\nname: a\n---\nA")
+            .expect("write system prompt");
 
         let prompt = workspace
             .build_system_prompt(
@@ -175,7 +189,8 @@ mod tests {
             )
             .expect("prompt");
         assert!(!prompt.contains("name: a"));
-        assert!(prompt.contains("# AGENTS.md"));
+        assert!(prompt.starts_with("A\n\n## 你的一些记忆："));
+        assert!(prompt.contains("## 你的一些记忆："));
         assert!(prompt.contains("User data"));
         assert!(prompt.contains("Soul data"));
     }
@@ -186,8 +201,8 @@ mod tests {
         let workspace = AgentWorkspace::new(dir.path());
         workspace.ensure_layout().expect("layout");
         workspace
-            .write_workspace_file("AGENTS.md", "A")
-            .expect("write agents");
+            .write_workspace_file(SYSTEM_PROMPT_FILE_NAME, "A")
+            .expect("write system prompt");
 
         let project_dir = dir.path().join("project");
         fs::create_dir_all(&project_dir).expect("project dir");
@@ -202,8 +217,9 @@ mod tests {
             )
             .expect("prompt");
         assert!(prompt.contains(project_dir.to_string_lossy().as_ref()));
-        assert!(prompt.contains("profile_update"));
-        assert!(prompt.contains("memory_system_search"));
+        assert!(prompt.contains("## 活动区域"));
+        assert!(prompt.contains("### User Profile"));
+        assert!(prompt.contains("### Agent Soul"));
         assert!(prompt.contains("A user"));
         assert!(prompt.contains("A soul"));
     }
@@ -214,8 +230,8 @@ mod tests {
         let workspace = AgentWorkspace::new(dir.path());
         workspace.ensure_layout().expect("layout");
         workspace
-            .write_workspace_file("AGENTS.md", "A")
-            .expect("write agents");
+            .write_workspace_file(SYSTEM_PROMPT_FILE_NAME, "A")
+            .expect("write system prompt");
 
         let prompt = workspace
             .build_system_prompt(
@@ -226,25 +242,56 @@ mod tests {
                 ],
             )
             .expect("prompt");
-        assert!(prompt.contains("...[truncated]"));
+        assert!(prompt.contains("...[已截断]"));
     }
 
     #[test]
-    fn install_templates_overwrites_existing_agents_template() {
+    fn install_templates_overwrites_existing_system_prompt_template() {
         let dir = tempdir().expect("tempdir");
         let workspace = AgentWorkspace::new(dir.path());
         workspace.ensure_layout().expect("layout");
         workspace
-            .write_workspace_file("AGENTS.md", "A")
-            .expect("write agents");
-        let content =
-            fs::read_to_string(dir.path().join("workspace").join("AGENTS.md")).expect("read agents");
+            .write_workspace_file(SYSTEM_PROMPT_FILE_NAME, "A")
+            .expect("write system prompt");
+        let content = fs::read_to_string(
+            dir.path().join("workspace").join(SYSTEM_PROMPT_FILE_NAME),
+        )
+        .expect("read system prompt");
         assert_eq!(content, "A");
 
         let copied = workspace.install_templates().expect("install");
-        assert_eq!(copied, vec!["AGENTS.md".to_string()]);
-        let content =
-            fs::read_to_string(dir.path().join("workspace").join("AGENTS.md")).expect("read agents");
-        assert_eq!(content, ZH_AGENTS_TEMPLATE);
+        assert_eq!(copied, vec![SYSTEM_PROMPT_FILE_NAME.to_string()]);
+        let content = fs::read_to_string(
+            dir.path().join("workspace").join(SYSTEM_PROMPT_FILE_NAME),
+        )
+        .expect("read system prompt");
+        assert_eq!(content, ZH_SYSTEM_PROMPT_TEMPLATE);
+    }
+
+    #[test]
+    fn install_templates_removes_legacy_agents_file() {
+        let dir = tempdir().expect("tempdir");
+        let workspace = AgentWorkspace::new(dir.path());
+        workspace.ensure_layout().expect("layout");
+        fs::write(
+            dir.path().join("workspace").join(LEGACY_PROMPT_FILE_NAME),
+            "legacy",
+        )
+        .expect("write legacy prompt");
+
+        workspace.install_templates().expect("install");
+
+        assert!(
+            !dir.path()
+                .join("workspace")
+                .join(LEGACY_PROMPT_FILE_NAME)
+                .exists()
+        );
+        assert!(
+            dir.path()
+                .join("workspace")
+                .join(SYSTEM_PROMPT_FILE_NAME)
+                .is_file()
+        );
     }
 }

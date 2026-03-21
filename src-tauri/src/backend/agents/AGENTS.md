@@ -46,7 +46,7 @@
 - `token_estimator.rs`
   估算消息 token。
 - `workspace.rs`
-  管理 agent 内部上下文目录、`AGENTS.md` 模板安装与系统 prompt 拼装。
+  管理 agent 内部上下文目录、`SYSTEM_PROMPT.md` 模板安装与系统 prompt 拼装。
 - `tools/`
   工具实现与工具运行时。
 
@@ -145,7 +145,7 @@
 
 ## Context / Profile / Memory 边界
 
-- `workspace.rs` 只处理 agent 内部上下文目录、`AGENTS.md` 模板安装、系统 prompt 拼装。
+- `workspace.rs` 只处理 agent 内部上下文目录、`SYSTEM_PROMPT.md` 模板安装、系统 prompt 拼装。
 - `profile` 能力负责 `user` / `soul` 两类每轮注入的持久画像，不走文件系统。
 - `memory_system_*` 负责按需检索的长期记忆，不默认整库注入 prompt。
 - 工具如果要改动 `user` / `soul`，必须使用 `profile_update`；如果要改动长期记忆，必须使用 `memory_system_*`，不要再引入文件式记忆规则。
