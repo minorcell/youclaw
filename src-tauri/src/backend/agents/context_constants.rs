@@ -1,8 +1,6 @@
 //! Shared constants for chat context assembly/compaction.
 
-/// Character budget for merged session summaries.
-pub(crate) const SUMMARY_CHAR_LIMIT: usize = 16_000;
-/// Marker for persisted compressed summary.
-pub(crate) const SUMMARY_MARKER: &str = "[previous-summary]";
-/// Marker for ephemeral in-memory step summary.
-pub(crate) const STEP_SUMMARY_MARKER: &str = "[step-summary]";
+/// Marker for compressed session context injected into the prompt.
+pub(crate) const SUMMARY_MARKER: &str = "[compressed-context]";
+/// Marker for the runtime memory reflection hint injected before the latest user message.
+pub(crate) const MEMORY_HINT_MARKER: &str = "<memory-hint>";

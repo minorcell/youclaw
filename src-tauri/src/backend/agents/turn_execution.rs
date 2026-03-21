@@ -6,24 +6,22 @@ use aquaregia::{
     AgentStep, ErrorCode, FinishReason, GenerateTextRequest, LlmClient, ToolCall, Usage,
 };
 
-use crate::backend::agents::context_compactor::{
-    compact_in_memory_messages, maybe_compact_session_context,
-};
+use crate::backend::agents::context_compactor::maybe_compact_session_context;
 use crate::backend::agents::message_builder::{
-    build_turn_messages, inject_turn_guidance, make_assistant_message,
+    build_turn_messages, inject_memory_hint, inject_turn_guidance, make_assistant_message,
 };
 use crate::backend::agents::stream_collector::collect_step_stream;
 use crate::backend::agents::token_estimator::estimate_tokens_for_messages;
 use crate::backend::agents::tool_dispatcher::handle_tool_calls;
-    use crate::backend::agents::tools::{
-        build_bash_exec_tool, build_filesystem_tools, build_memory_system_get_tool,
-        build_memory_system_remember_tool, build_memory_system_search_tool,
-        build_memory_system_update_tool, build_profile_get_tool, build_profile_update_tool,
-        BashToolContext, FilesystemToolContext, ToolRuntimeContext,
-    };
+use crate::backend::agents::tools::{
+    build_bash_exec_tool, build_filesystem_tools, build_memory_system_get_tool,
+    build_memory_system_remember_tool, build_memory_system_search_tool,
+    build_memory_system_update_tool, build_profile_get_tool, build_profile_update_tool,
+    BashToolContext, FilesystemToolContext, ToolRuntimeContext,
+};
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::domain::{
-    record_from_message, title_from_first_prompt, ChatMessage, ChatTurn, TurnStatus,
+    record_from_message, title_from_first_prompt, ChatTurn, TurnStatus,
 };
 use crate::backend::models::events::{
     StepFinishedPayload, StepStartedPayload, TurnFinishedPayload,
@@ -66,25 +64,30 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
     } else {
         builder.build()?
     };
+    let token = state
+        .get_turn_token(&turn.id)
+        .ok_or_else(|| AppError::Cancelled("turn token missing".to_string()))?;
 
     let _ = maybe_compact_session_context(
         &state,
+        &client,
         &turn.session_id,
         &provider.model,
         compact_threshold,
         false,
-    )?;
+        &token,
+    )
+    .await?;
     let mut messages = build_turn_messages(&state, &turn.session_id)?;
     let onboarding_guidance = build_profile_onboarding_guidance(&state, &turn.session_id)?;
     if let Some(guidance) = onboarding_guidance.as_deref() {
         inject_turn_guidance(&mut messages, guidance);
+    } else {
+        inject_memory_hint(&mut messages);
     }
 
     let current_step = Arc::new(AtomicU8::new(0));
     let tool_calls = Arc::new(Mutex::new(HashMap::<String, ToolCall>::new()));
-    let token = state
-        .get_turn_token(&turn.id)
-        .ok_or_else(|| AppError::Cancelled("turn token missing".to_string()))?;
 
     let tool_runtime = ToolRuntimeContext {
         session_id: turn.session_id.clone(),
@@ -129,7 +132,6 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
         .collect::<Vec<_>>();
 
     let mut usage_total = Usage::default();
-    let mut new_persisted_messages = Vec::<ChatMessage>::new();
     let mut final_output = String::new();
     let mut completed_step_count = 0u32;
     let mut finished = false;
@@ -139,23 +141,24 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
 
         let estimated_tokens = estimate_tokens_for_messages(&messages, &provider.model);
         if estimated_tokens > compact_threshold {
-            if step == 1 {
-                if maybe_compact_session_context(
-                    &state,
-                    &turn.session_id,
-                    &provider.model,
-                    compact_threshold,
-                    true,
-                )?
-                .is_some()
-                {
-                    messages = build_turn_messages(&state, &turn.session_id)?;
-                    if let Some(guidance) = onboarding_guidance.as_deref() {
-                        inject_turn_guidance(&mut messages, guidance);
-                    }
+            if maybe_compact_session_context(
+                &state,
+                &client,
+                &turn.session_id,
+                &provider.model,
+                compact_threshold,
+                true,
+                &token,
+            )
+            .await?
+            .is_some()
+            {
+                messages = build_turn_messages(&state, &turn.session_id)?;
+                if let Some(guidance) = onboarding_guidance.as_deref() {
+                    inject_turn_guidance(&mut messages, guidance);
+                } else {
+                    inject_memory_hint(&mut messages);
                 }
-            } else {
-                let _ = compact_in_memory_messages(&mut messages);
             }
         }
 
@@ -197,7 +200,7 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
         let persisted_assistant =
             record_from_message(&turn.session_id, &turn.id, &assistant_message)?;
         messages.push(assistant_message);
-        new_persisted_messages.push(persisted_assistant);
+        state.storage.insert_message(&persisted_assistant)?;
 
         if step_output.tool_calls.is_empty() {
             let step_state = AgentStep {
@@ -229,7 +232,6 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
             &step_output.tool_calls,
             &tool_map,
             &mut messages,
-            &mut new_persisted_messages,
         )
         .await?;
 
@@ -262,7 +264,6 @@ pub(super) async fn execute_turn(state: BackendState, turn: ChatTurn) -> AppResu
         &state,
         &turn,
         &session.title,
-        &new_persisted_messages,
         &final_output,
         &usage_total,
         completed_step_count,
@@ -314,12 +315,10 @@ fn finalize_turn(
     state: &BackendState,
     turn: &ChatTurn,
     session_title: &str,
-    new_persisted_messages: &[ChatMessage],
     final_output: &str,
     usage_total: &Usage,
     step_count: u32,
 ) -> AppResult<()> {
-    state.storage.insert_messages(new_persisted_messages)?;
     let turn_messages = state.storage.list_messages_for_turn(&turn.id)?;
     let finished_turn =
         state

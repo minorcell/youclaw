@@ -1,9 +1,9 @@
 //! Agent 运行期子模块。
 //!
 //! 当前主要承载工具系统，后续可继续扩展为 `planner` / `executor` 等模块。
+mod prompt;
 mod turn_execution;
 mod turn_start;
-mod prompt;
 
 pub mod context_compactor;
 pub mod context_constants;
@@ -20,13 +20,6 @@ use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::domain::ChatTurn;
 use crate::backend::models::events::{TurnCancelledPayload, TurnFailedPayload};
 use crate::backend::BackendState;
-
-#[cfg(test)]
-use crate::backend::agents::context_compactor::compact_in_memory_messages;
-#[cfg(test)]
-use crate::backend::agents::context_constants::{STEP_SUMMARY_MARKER, SUMMARY_MARKER};
-#[cfg(test)]
-use crate::backend::agents::summarizer::extract_message_text;
 
 pub fn spawn_turn(state: BackendState, turn: ChatTurn) {
     tokio::spawn(async move {
@@ -78,47 +71,8 @@ pub fn start_turn(state: BackendState, session_id: String, text: String) -> AppR
 
 #[cfg(test)]
 mod tests {
-    use aquaregia::Message;
-
-    use super::{
-        compact_in_memory_messages, extract_message_text, turn_execution::clamp_max_steps,
-        turn_execution::resolve_context_window_tokens, STEP_SUMMARY_MARKER, SUMMARY_MARKER,
-    };
+    use super::{turn_execution::clamp_max_steps, turn_execution::resolve_context_window_tokens};
     use crate::backend::agents::turn_execution::{MAX_MAX_STEPS, MIN_MAX_STEPS};
-
-    #[test]
-    fn in_memory_compaction_keeps_latest_message() {
-        let mut messages = vec![
-            Message::system_text("system"),
-            Message::user_text("u1"),
-            Message::assistant_text("a1"),
-            Message::user_text("u2"),
-            Message::assistant_text("a2"),
-            Message::user_text("u3"),
-        ];
-
-        let summary = compact_in_memory_messages(&mut messages).expect("summary");
-        assert!(!summary.is_empty());
-        assert_eq!(messages.len(), 3);
-        assert!(extract_message_text(&messages[1]).starts_with(STEP_SUMMARY_MARKER));
-        assert_eq!(extract_message_text(&messages[2]), "u3");
-    }
-
-    #[test]
-    fn in_memory_compaction_preserves_previous_summary_slot() {
-        let mut messages = vec![
-            Message::system_text("system"),
-            Message::user_text(format!("{SUMMARY_MARKER}\nold")),
-            Message::user_text("u1"),
-            Message::assistant_text("a1"),
-            Message::user_text("u2"),
-        ];
-
-        compact_in_memory_messages(&mut messages).expect("summary");
-        assert!(extract_message_text(&messages[1]).starts_with(SUMMARY_MARKER));
-        assert!(extract_message_text(&messages[2]).starts_with(STEP_SUMMARY_MARKER));
-        assert_eq!(extract_message_text(&messages[3]), "u2");
-    }
 
     #[test]
     fn clamp_max_steps_keeps_bounds() {

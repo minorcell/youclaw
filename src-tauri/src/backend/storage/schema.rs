@@ -145,7 +145,7 @@ impl StorageService {
             );
             CREATE TABLE IF NOT EXISTS session_memory_state (
                 session_id TEXT PRIMARY KEY,
-                compressed_summary TEXT NOT NULL DEFAULT '',
+                summary_json TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS message_marks (
@@ -203,6 +203,7 @@ impl StorageService {
         ensure_chat_sessions_approval_mode_column(&conn)?;
         ensure_chat_sessions_workspace_path_column(&conn)?;
         ensure_turn_tool_metrics_detail_columns(&conn)?;
+        ensure_session_memory_state_summary_json(&conn)?;
         conn.execute(
             "INSERT OR IGNORE INTO agent_settings (
                 id, max_steps, max_input_tokens, compact_ratio, language, updated_at
@@ -247,7 +248,10 @@ fn ensure_chat_sessions_workspace_path_column(conn: &Connection) -> AppResult<()
         .any(|column| column == "workspace_path");
 
     if !has_workspace_path {
-        conn.execute("ALTER TABLE chat_sessions ADD COLUMN workspace_path TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE chat_sessions ADD COLUMN workspace_path TEXT",
+            [],
+        )?;
     }
 
     Ok(())
@@ -281,5 +285,26 @@ fn ensure_turn_tool_metrics_detail_columns(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    Ok(())
+}
+
+fn ensure_session_memory_state_summary_json(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(session_memory_state)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = columns.collect::<Result<Vec<_>, _>>()?;
+
+    if existing.iter().any(|column| column == "summary_json") {
+        return Ok(());
+    }
+
+    conn.execute("DROP TABLE IF EXISTS session_memory_state", [])?;
+    conn.execute(
+        "CREATE TABLE session_memory_state (
+            session_id TEXT PRIMARY KEY,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
     Ok(())
 }

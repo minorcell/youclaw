@@ -97,7 +97,11 @@ impl StorageService {
         Ok(())
     }
 
-    pub fn update_session_workspace(&self, session_id: &str, workspace_path: &str) -> AppResult<()> {
+    pub fn update_session_workspace(
+        &self,
+        session_id: &str,
+        workspace_path: &str,
+    ) -> AppResult<()> {
         let conn = self.open_connection()?;
         let now = now_timestamp();
         let updated = conn.execute(
@@ -394,32 +398,36 @@ impl StorageService {
         Ok(changed)
     }
 
-    pub fn get_session_compressed_summary(&self, session_id: &str) -> AppResult<String> {
+    pub fn get_session_context_summary(
+        &self,
+        session_id: &str,
+    ) -> AppResult<SessionContextSummary> {
         let conn = self.open_connection()?;
-        let summary = conn
+        let summary_json = conn
             .query_row(
-                "SELECT compressed_summary FROM session_memory_state WHERE session_id = ?1",
+                "SELECT summary_json FROM session_memory_state WHERE session_id = ?1",
                 [session_id],
                 |row| row.get::<_, String>(0),
             )
             .optional()?
-            .unwrap_or_default();
-        Ok(summary)
+            .unwrap_or_else(|| "{}".to_string());
+        Ok(serde_json::from_str::<SessionContextSummary>(&summary_json)?.normalize())
     }
 
-    pub fn upsert_session_compressed_summary(
+    pub fn upsert_session_context_summary(
         &self,
         session_id: &str,
-        compressed_summary: &str,
+        summary: &SessionContextSummary,
     ) -> AppResult<()> {
         let conn = self.open_connection()?;
+        let summary_json = serde_json::to_string(summary)?;
         conn.execute(
-            "INSERT INTO session_memory_state (session_id, compressed_summary, updated_at)
+            "INSERT INTO session_memory_state (session_id, summary_json, updated_at)
              VALUES (?1, ?2, ?3)
              ON CONFLICT(session_id) DO UPDATE SET
-               compressed_summary = excluded.compressed_summary,
+               summary_json = excluded.summary_json,
                updated_at = excluded.updated_at",
-            params![session_id, compressed_summary, now_timestamp()],
+            params![session_id, summary_json, now_timestamp()],
         )?;
         Ok(())
     }

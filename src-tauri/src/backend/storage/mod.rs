@@ -19,8 +19,8 @@ use serde_json::Value;
 use crate::backend::errors::{AppError, AppResult};
 use crate::backend::models::domain::{
     flatten_provider_profiles, message_from_record, now_timestamp, AgentConfigPayload, ChatMessage,
-    ChatSession, ChatTurn, MessageRole, ProviderAccount, ProviderProfile, StoredProviders,
-    ToolApproval, TurnStatus,
+    ChatSession, ChatTurn, MessageRole, ProviderAccount, ProviderProfile, SessionContextSummary,
+    StoredProviders, ToolApproval, TurnStatus,
 };
 use crate::backend::models::requests::{
     AgentConfigUpdateRequest, UsageLogDetailRequest, UsageLogsListRequest, UsageStatsListRequest,
@@ -157,12 +157,13 @@ fn normalize_language(value: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::{memory::build_fts_query, normalize_language, StorageService};
     use crate::backend::models::domain::{
         new_chat_session, new_chat_turn, new_provider_account, new_provider_model,
-        new_user_chat_message,
+        new_user_chat_message, SessionContextSummary,
     };
     use crate::backend::models::requests::{CreateProviderModelRequest, CreateProviderRequest};
 
@@ -250,6 +251,69 @@ mod tests {
             .get_last_opened_session_id()
             .expect("load last opened session id");
         assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn persists_session_context_summary_as_json() {
+        let dir = tempdir().expect("tempdir");
+        let storage = StorageService::new(dir.path().join("state")).expect("storage");
+        let session = new_chat_session(None);
+        storage.insert_session(&session).expect("insert session");
+
+        let summary = SessionContextSummary {
+            current_goal: "Ship compaction".to_string(),
+            pending_actions: vec!["Clean prompt injection".to_string()],
+            ..SessionContextSummary::default()
+        };
+        storage
+            .upsert_session_context_summary(&session.id, &summary)
+            .expect("persist summary");
+
+        let loaded = storage
+            .get_session_context_summary(&session.id)
+            .expect("load summary");
+        assert_eq!(loaded.current_goal, "Ship compaction");
+        assert_eq!(
+            loaded.pending_actions,
+            vec!["Clean prompt injection".to_string()]
+        );
+    }
+
+    #[test]
+    fn rebuilds_legacy_session_memory_state_table() {
+        let dir = tempdir().expect("tempdir");
+        let state_dir = dir.path().join("state");
+        std::fs::create_dir_all(&state_dir).expect("create state dir");
+        let db_path = state_dir.join("app_v2.sqlite");
+        let conn = Connection::open(&db_path).expect("open legacy db");
+        conn.execute(
+            "CREATE TABLE session_memory_state (
+                session_id TEXT PRIMARY KEY,
+                compressed_summary TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("create legacy table");
+        drop(conn);
+
+        let storage = StorageService::new(state_dir).expect("storage");
+        let session = new_chat_session(None);
+        storage.insert_session(&session).expect("insert session");
+        storage
+            .upsert_session_context_summary(
+                &session.id,
+                &SessionContextSummary {
+                    current_goal: "Rebuilt".to_string(),
+                    ..SessionContextSummary::default()
+                },
+            )
+            .expect("write rebuilt summary");
+
+        let loaded = storage
+            .get_session_context_summary(&session.id)
+            .expect("load rebuilt summary");
+        assert_eq!(loaded.current_goal, "Rebuilt");
     }
 
     #[test]

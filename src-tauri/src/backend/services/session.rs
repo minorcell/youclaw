@@ -157,9 +157,9 @@ fn normalize_workspace_path(raw: &str) -> AppResult<String> {
     }
 
     let expanded = expand_home_path(trimmed);
-    let canonical = expanded.canonicalize().map_err(|_| {
-        AppError::Validation(format!("workspace path does not exist: {trimmed}"))
-    })?;
+    let canonical = expanded
+        .canonicalize()
+        .map_err(|_| AppError::Validation(format!("workspace path does not exist: {trimmed}")))?;
     if !canonical.is_dir() {
         return Err(AppError::Validation(format!(
             "workspace path is not a directory: {trimmed}"

@@ -18,7 +18,7 @@ use crate::backend::agents::tools::{
     requires_tool_call_binding, tool_action, INTERNAL_TOOL_CALL_ID_FIELD,
 };
 use crate::backend::errors::AppResult;
-use crate::backend::models::domain::{record_from_message, ChatMessage, ChatTurn};
+use crate::backend::models::domain::{record_from_message, ChatTurn};
 use crate::backend::models::events::ToolFinishedPayload;
 use crate::backend::BackendState;
 
@@ -30,7 +30,6 @@ pub(crate) async fn handle_tool_calls(
     step_tool_calls: &[ToolCall],
     tool_map: &HashMap<String, Tool>,
     messages: &mut Vec<Message>,
-    new_persisted_messages: &mut Vec<ChatMessage>,
 ) -> AppResult<Vec<ToolResult>> {
     let mut tool_results = Vec::new();
     let result_processor = ToolResultProcessor::new();
@@ -94,7 +93,7 @@ pub(crate) async fn handle_tool_calls(
         let persisted_tool_message =
             record_from_message(&turn.session_id, &turn.id, &tool_message)?;
         messages.push(tool_message);
-        new_persisted_messages.push(persisted_tool_message);
+        state.storage.insert_message(&persisted_tool_message)?;
         tool_results.push(tool_result);
     }
     Ok(tool_results)
