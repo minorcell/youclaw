@@ -82,11 +82,7 @@ pub(crate) fn execute_read_text_file(
     let truncated = selected.chars().count() > MAX_TOOL_OUTPUT_CHARS;
 
     Ok(json!({
-        "action": "read_text_file",
-        "path": resolved.to_string_lossy(),
         "total_lines": total_lines,
-        "head": head,
-        "tail": tail,
         "truncated": truncated,
         "content": truncate(&selected, MAX_TOOL_OUTPUT_CHARS),
     }))

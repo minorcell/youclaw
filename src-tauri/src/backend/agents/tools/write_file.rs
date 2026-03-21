@@ -2,7 +2,7 @@
 
 use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::backend::errors::{AppError, AppResult};
 
@@ -76,24 +76,9 @@ pub(crate) async fn execute_write_file(
         Some(content.len()),
     )?;
 
-    let mut payload = Map::new();
-    payload.insert(
-        "action".to_string(),
-        Value::String("write_file".to_string()),
-    );
-    payload.insert(
-        "path".to_string(),
-        Value::String(resolved.to_string_lossy().to_string()),
-    );
-    payload.insert(
-        "bytes_written".to_string(),
-        Value::Number(serde_json::Number::from(content.len())),
-    );
-    if approval.approval_bypassed() {
-        payload.insert("approval_bypassed".to_string(), Value::Bool(true));
-    }
-
-    Ok(Value::Object(payload))
+    Ok(json!({
+        "bytes_written": content.len(),
+    }))
 }
 
 pub fn build_write_file_tool(context: FilesystemToolContext) -> Tool {

@@ -89,17 +89,15 @@ pub(crate) fn filesystem_tool_action(tool_name: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn tool_action(tool_name: &str) -> Option<&'static str> {
-    filesystem_tool_action(tool_name).or_else(|| {
-        match tool_name {
-            BASH_EXEC_TOOL_NAME => Some("exec"),
-            "profile_get" => Some("get"),
-            "profile_update" => Some("update"),
-            "memory_system_search" => Some("search"),
-            "memory_system_get" => Some("get"),
-            "memory_system_remember" => Some("remember"),
-            "memory_system_update" => Some("update"),
-            _ => None,
-        }
+    filesystem_tool_action(tool_name).or_else(|| match tool_name {
+        BASH_EXEC_TOOL_NAME => Some("exec"),
+        "profile_get" => Some("get"),
+        "profile_update" => Some("update"),
+        "memory_system_search" => Some("search"),
+        "memory_system_get" => Some("get"),
+        "memory_system_remember" => Some("remember"),
+        "memory_system_update" => Some("update"),
+        _ => None,
     })
 }
 

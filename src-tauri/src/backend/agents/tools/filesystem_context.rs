@@ -929,7 +929,7 @@ mod tests {
     }
 
     #[test]
-    fn list_directory_formats_sorted_entries() {
+    fn list_directory_orders_entries_by_name() {
         let dir = tempdir().expect("tempdir");
         let (context, _storage, workspace_root) = build_test_context(&dir);
         std::fs::create_dir_all(workspace_root.join("a-dir")).expect("dir");
@@ -945,17 +945,25 @@ mod tests {
         let payload = context
             .list_directory("list_directory", ".", Some(tool_call_id.as_str()))
             .expect("list directory");
-        let formatted = payload
-            .get("formatted")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
+        let names = payload
+            .get("entries")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| {
+                value
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .map(ToOwned::to_owned)
+            })
+            .collect::<Vec<_>>();
 
-        assert!(formatted.contains("[DIR] a-dir"));
-        assert!(formatted.contains("[FILE] b-file.txt"));
-
-        let dir_index = formatted.find("[DIR] a-dir").unwrap_or(usize::MAX);
-        let file_index = formatted.find("[FILE] b-file.txt").unwrap_or(0);
-        assert!(dir_index < file_index);
+        assert_eq!(names.first().map(String::as_str), Some("a-dir"));
+        assert_eq!(names.get(1).map(String::as_str), Some("b-file.txt"));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
     }
 
     #[test]
@@ -1106,13 +1114,30 @@ mod tests {
             )
             .expect("read files");
 
-        let merged = payload
-            .get("merged")
-            .and_then(|value| value.as_str())
+        let results = payload
+            .get("results")
+            .and_then(|value| value.as_array())
+            .cloned()
             .unwrap_or_default();
-        assert!(merged.contains("f1.txt:\none"));
-        assert!(merged.contains("missing.txt: Error -"));
-        assert!(merged.contains("f2.txt:\ntwo"));
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(
+            results[0].get("content").and_then(|value| value.as_str()),
+            Some("one")
+        );
+        assert_eq!(
+            results[1].get("path").and_then(|value| value.as_str()),
+            Some("missing.txt")
+        );
+        assert!(results[1]
+            .get("error")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .contains("No such file or directory"));
+        assert_eq!(
+            results[2].get("content").and_then(|value| value.as_str()),
+            Some("two")
+        );
     }
 
     #[test]
@@ -1283,9 +1308,9 @@ mod tests {
         );
         assert_eq!(
             payload
-                .get("approval_bypassed")
-                .and_then(|value| value.as_bool()),
-            None
+                .get("bytes_written")
+                .and_then(|value| value.as_u64()),
+            Some(5)
         );
     }
 
@@ -1320,9 +1345,9 @@ mod tests {
         );
         assert_eq!(
             payload
-                .get("approval_bypassed")
-                .and_then(|value| value.as_bool()),
-            Some(true)
+                .get("bytes_written")
+                .and_then(|value| value.as_u64()),
+            Some(5)
         );
         assert!(storage.list_approvals().expect("list approvals").is_empty());
     }
@@ -1357,10 +1382,6 @@ mod tests {
             .await
             .expect("dry run");
 
-        assert_eq!(
-            payload.get("dry_run").and_then(|value| value.as_bool()),
-            Some(true)
-        );
         assert!(payload
             .get("diff")
             .and_then(|value| value.as_str())
@@ -1448,13 +1469,11 @@ mod tests {
             .expect("edit in full access");
 
         assert_eq!(std::fs::read_to_string(&target).expect("read"), "after\n");
-        assert_eq!(
-            payload
-                .get("approval_bypassed")
-                .and_then(|value| value.as_bool()),
-            Some(true)
-        );
+        assert!(payload
+            .get("diff")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .contains("---"));
         assert!(storage.list_approvals().expect("list approvals").is_empty());
     }
-
 }

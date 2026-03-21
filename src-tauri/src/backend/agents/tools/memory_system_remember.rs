@@ -39,8 +39,9 @@ pub fn build_memory_system_remember_tool(memory: MemoryService) -> Tool {
                         content: args.content,
                     })
                     .map_err(|err| ToolExecError::Execution(err.message()))?;
-                serde_json::to_value(payload)
-                    .map_err(|err| ToolExecError::Execution(format!("serialize failed: {err}")))
+                Ok(json!({
+                    "memory_id": payload.entry.id,
+                }))
             }
         })
 }

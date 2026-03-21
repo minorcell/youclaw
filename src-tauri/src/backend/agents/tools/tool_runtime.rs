@@ -62,7 +62,9 @@ impl ToolApprovalOutcome {
 impl ToolRuntimeContext {
     fn should_require_approval(&self, mode: ToolApprovalMode) -> bool {
         match mode {
-            ToolApprovalMode::Default => !matches!(self.approval_mode, SessionApprovalMode::FullAccess),
+            ToolApprovalMode::Default => {
+                !matches!(self.approval_mode, SessionApprovalMode::FullAccess)
+            }
         }
     }
 

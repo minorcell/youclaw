@@ -88,10 +88,6 @@ pub(crate) fn execute_search_files(
     )?;
 
     Ok(json!({
-        "action": "search_files",
-        "path": resolved.to_string_lossy(),
-        "pattern": pattern,
-        "exclude_patterns": exclude_patterns,
         "count": matches.len(),
         "filtered_ignored_paths": filtered_ignored_paths,
         "matches": matches,

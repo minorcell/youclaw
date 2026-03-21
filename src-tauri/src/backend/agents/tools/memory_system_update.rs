@@ -37,8 +37,9 @@ pub fn build_memory_system_update_tool(memory: MemoryService) -> Tool {
                 let payload = memory
                     .update_existing(&args.memory_id, &args.title, &args.content)
                     .map_err(|err| ToolExecError::Execution(err.message()))?;
-                serde_json::to_value(payload)
-                    .map_err(|err| ToolExecError::Execution(format!("serialize failed: {err}")))
+                Ok(json!({
+                    "memory_id": payload.entry.id,
+                }))
             }
         })
 }

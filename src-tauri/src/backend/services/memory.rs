@@ -55,7 +55,11 @@ impl MemoryService {
     pub fn upsert(&self, req: MemorySystemUpsertRequest) -> AppResult<MemorySystemWritePayload> {
         let title = normalize_memory_title(&req.title)?;
         let content = normalize_memory_content(&req.content)?;
-        let id = req.id.as_deref().map(str::trim).filter(|value| !value.is_empty());
+        let id = req
+            .id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
         let (entry, created) = self.storage.upsert_memory_entry(id, &title, &content)?;
         Ok(MemorySystemWritePayload { entry, created })
     }
@@ -68,7 +72,9 @@ impl MemoryService {
     ) -> AppResult<MemorySystemWritePayload> {
         let entry_id = id.trim();
         if entry_id.is_empty() {
-            return Err(AppError::Validation("memory id cannot be empty".to_string()));
+            return Err(AppError::Validation(
+                "memory id cannot be empty".to_string(),
+            ));
         }
         let _existing: MemoryRecord = self.storage.get_memory_entry(entry_id)?;
         self.upsert(MemorySystemUpsertRequest {
@@ -88,7 +94,9 @@ impl MemoryService {
 fn normalize_memory_title(raw: &str) -> AppResult<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(AppError::Validation("memory title cannot be empty".to_string()));
+        return Err(AppError::Validation(
+            "memory title cannot be empty".to_string(),
+        ));
     }
     Ok(trimmed.chars().take(MAX_TITLE_CHARS).collect::<String>())
 }

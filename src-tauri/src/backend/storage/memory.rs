@@ -85,7 +85,10 @@ impl StorageService {
                 updated_at = excluded.updated_at",
             params![entry_id, title, content, created_at, now],
         )?;
-        tx.execute("DELETE FROM memory_entries_fts WHERE id = ?1", [entry_id.as_str()])?;
+        tx.execute(
+            "DELETE FROM memory_entries_fts WHERE id = ?1",
+            [entry_id.as_str()],
+        )?;
         tx.execute(
             "INSERT INTO memory_entries_fts (id, title, content) VALUES (?1, ?2, ?3)",
             params![entry_id, title, content],
@@ -421,7 +424,10 @@ fn preview_text(content: &str, max_chars: usize) -> String {
     if normalized.chars().count() <= max_chars {
         return normalized;
     }
-    let mut preview = normalized.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    let mut preview = normalized
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
     preview.push_str("...");
     preview
 }
@@ -492,6 +498,8 @@ mod tests {
             .expect("create");
 
         assert!(storage.delete_memory_entry(&entry.id).expect("delete"));
-        assert!(!storage.delete_memory_entry(&entry.id).expect("delete again"));
+        assert!(!storage
+            .delete_memory_entry(&entry.id)
+            .expect("delete again"));
     }
 }
