@@ -5,6 +5,8 @@ use crate::backend::models::domain::SessionApprovalMode;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub provider_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +19,12 @@ pub struct UpdateSessionApprovalModeRequest {
 pub struct BindSessionProviderRequest {
     pub session_id: String,
     pub provider_profile_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSessionWorkspaceRequest {
+    pub session_id: String,
+    pub workspace_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

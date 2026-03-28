@@ -43,6 +43,8 @@ pub struct ChatSession {
     pub id: String,
     pub title: String,
     pub provider_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     #[serde(default)]
     pub approval_mode: SessionApprovalMode,
     pub created_at: String,
@@ -94,6 +96,7 @@ pub fn new_chat_session(provider_profile_id: Option<String>) -> ChatSession {
         id: Uuid::new_v4().to_string(),
         title: "New chat".to_string(),
         provider_profile_id,
+        workspace_path: None,
         approval_mode: SessionApprovalMode::Default,
         created_at: now.clone(),
         updated_at: now,

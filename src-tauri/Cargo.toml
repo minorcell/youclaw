@@ -32,7 +32,7 @@ ignore = "0.4"
 rusqlite = { version = "0.34", features = ["bundled"] }
 schemars = { version = "0.8", features = ["derive"] }
 similar = "2"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -51,6 +51,9 @@ tokio-util = "0.7"
 libc = "0.2"
 uuid = { version = "1", features = ["serde", "v4"] }
 tiktoken-rs = "0.9.1"
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-dialog = "2.4.3"
+tauri-plugin-notification = "2.3.3"
 
 [dev-dependencies]
 tempfile = "3"

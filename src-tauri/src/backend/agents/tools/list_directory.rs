@@ -8,9 +8,7 @@ use serde_json::{json, Value};
 
 use crate::backend::errors::{AppError, AppResult};
 
-use super::filesystem_context::{
-    truncate, validate_path, FilesystemToolContext, ToolIgnorePolicy, MAX_TOOL_OUTPUT_CHARS,
-};
+use super::filesystem_context::{validate_path, FilesystemToolContext, ToolIgnorePolicy};
 
 pub const LIST_DIRECTORY_TOOL_NAME: &str = "list_directory";
 
@@ -56,9 +54,7 @@ pub(crate) fn execute_list_directory(
         }
         entries.push(json!({
             "name": entry.file_name().to_string_lossy().to_string(),
-            "path": entry.path().to_string_lossy().to_string(),
             "kind": if is_dir { "dir" } else { "file" },
-            "label": if is_dir { "[DIR]" } else { "[FILE]" },
             "size_bytes": if metadata.is_file() { Some(metadata.len()) } else { None },
         }));
     }
@@ -68,19 +64,6 @@ pub(crate) fn execute_list_directory(
             .and_then(Value::as_str)
             .cmp(&right.get("name").and_then(Value::as_str))
     });
-
-    let formatted = entries
-        .iter()
-        .map(|item| {
-            let label = item
-                .get("label")
-                .and_then(Value::as_str)
-                .unwrap_or("[FILE]");
-            let name = item.get("name").and_then(Value::as_str).unwrap_or("");
-            format!("{label} {name}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
 
     context.storage.record_file_operation(
         &context.session_id,
@@ -93,11 +76,8 @@ pub(crate) fn execute_list_directory(
     )?;
 
     Ok(json!({
-        "action": "list_directory",
-        "path": resolved.to_string_lossy(),
         "entries": entries,
         "filtered_ignored_entries": filtered_ignored_entries,
-        "formatted": truncate(&formatted, MAX_TOOL_OUTPUT_CHARS),
     }))
 }
 

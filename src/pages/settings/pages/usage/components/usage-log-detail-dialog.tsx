@@ -33,7 +33,7 @@ export function UsageLogDetailDialog({
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <DialogContent className='max-w-3xl p-0 sm:max-w-3xl' showCloseButton>
-        <div className='space-y-4 p-4'>
+        <div className='min-w-0 space-y-4 p-4'>
           <DialogHeader>
             <DialogTitle>Turn 详情</DialogTitle>
             <DialogDescription>
@@ -77,9 +77,9 @@ export function UsageLogDetailDialog({
                     正在加载详情...
                   </div>
                 ) : detail?.tools.length ? (
-                  <div className='no-scrollbar max-h-[50vh] space-y-2 overflow-y-auto pr-1'>
+                  <div className='no-scrollbar min-w-0 max-h-[50vh] space-y-2 overflow-y-auto pr-1'>
                     {detail.tools.map((tool) => (
-                      <div className='rounded-xl bg-background/80 p-3' key={tool.id}>
+                      <div className='min-w-0 rounded-xl bg-background/80 p-3' key={tool.id}>
                         <div className='flex flex-wrap items-center gap-2'>
                           <Badge className='bg-card text-foreground'>{tool.tool_name}</Badge>
                           {tool.tool_action ? (
@@ -103,7 +103,7 @@ export function UsageLogDetailDialog({
                           <div className='mt-3 space-y-1.5'>
                             <p className='text-xs font-medium text-muted-foreground'>参数</p>
                             <pre
-                              className='no-scrollbar max-h-56 overflow-auto rounded-lg bg-muted/35 p-3 text-[11px] leading-5 text-foreground/85'
+                              className='no-scrollbar max-h-56 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/35 p-3 text-[11px] leading-5 text-foreground/85'
                               data-allow-text-selection='true'
                             >
                               {JSON.stringify(tool.args_json, null, 2)}

@@ -4,7 +4,7 @@ use std::fs;
 
 use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::backend::errors::{AppError, AppResult};
 
@@ -75,9 +75,6 @@ pub(crate) async fn execute_edit_file(
             None,
         )?;
         return Ok(json!({
-            "action": "edit_file",
-            "path": resolved.to_string_lossy(),
-            "dry_run": true,
             "diff": truncate(&diff, MAX_TOOL_OUTPUT_CHARS),
         }));
     }
@@ -122,26 +119,9 @@ pub(crate) async fn execute_edit_file(
         Some(next.len()),
     )?;
 
-    let mut payload = Map::new();
-    payload.insert("action".to_string(), Value::String("edit_file".to_string()));
-    payload.insert(
-        "path".to_string(),
-        Value::String(resolved.to_string_lossy().to_string()),
-    );
-    payload.insert("dry_run".to_string(), Value::Bool(false));
-    payload.insert(
-        "bytes_written".to_string(),
-        Value::Number(serde_json::Number::from(next.len())),
-    );
-    payload.insert(
-        "diff".to_string(),
-        Value::String(truncate(&diff, MAX_TOOL_OUTPUT_CHARS)),
-    );
-    if approval.approval_bypassed() {
-        payload.insert("approval_bypassed".to_string(), Value::Bool(true));
-    }
-
-    Ok(Value::Object(payload))
+    Ok(json!({
+        "diff": truncate(&diff, MAX_TOOL_OUTPUT_CHARS),
+    }))
 }
 
 pub fn build_edit_file_tool(context: FilesystemToolContext) -> Tool {

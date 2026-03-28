@@ -42,8 +42,6 @@ pub(crate) fn execute_read_files(
     }
 
     let mut results = Vec::<Value>::with_capacity(paths.len());
-    let mut merged = Vec::<String>::with_capacity(paths.len());
-
     for input_path in paths {
         match validate_path(input_path, &context.workspace_root).and_then(
             |resolved| -> AppResult<(PathBuf, String, usize)> {
@@ -74,12 +72,9 @@ pub(crate) fn execute_read_files(
                 let safe_content = truncate(&content, MAX_TOOL_OUTPUT_CHARS);
                 results.push(json!({
                     "path": input_path,
-                    "resolved_path": resolved.to_string_lossy(),
-                    "ok": true,
                     "line_count": line_count,
                     "content": safe_content,
                 }));
-                merged.push(format!("{input_path}:\n{safe_content}\n"));
             }
             Err(err) => {
                 context.storage.record_file_operation(
@@ -95,18 +90,14 @@ pub(crate) fn execute_read_files(
                 let message = err.message();
                 results.push(json!({
                     "path": input_path,
-                    "ok": false,
                     "error": message,
                 }));
-                merged.push(format!("{input_path}: Error - {message}"));
             }
         }
     }
 
     Ok(json!({
-        "action": "read_files",
         "results": results,
-        "merged": truncate(&merged.join("\n---\n"), MAX_TOOL_OUTPUT_CHARS),
     }))
 }
 

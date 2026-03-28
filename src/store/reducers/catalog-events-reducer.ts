@@ -21,6 +21,7 @@ export function reduceCatalogEnvelope(envelope: WsEnvelope): Partial<AppStoreDat
       return {
         sessions: payload.sessions,
         lastOpenedSessionId: payload.last_opened_session_id,
+        recentWorkspaces: payload.recent_workspaces ?? [],
       }
     }
     case 'tool_approvals.resolve': {

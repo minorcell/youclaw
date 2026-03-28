@@ -1,4 +1,10 @@
-import type { ChatMessage, ChatSession, ProviderAccount, ToolApproval } from '@/lib/types'
+import type {
+  ChatMessage,
+  ChatSession,
+  ProviderAccount,
+  ToolApproval,
+  WorkspaceRootInfo,
+} from '@/lib/types'
 import type { TurnViewState } from '@/store/types'
 
 export type WsStatus = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
@@ -9,6 +15,7 @@ export interface AppStoreData {
   endpoint: string | null
   providerAccounts: ProviderAccount[]
   sessions: ChatSession[]
+  recentWorkspaces: WorkspaceRootInfo[]
   messagesBySession: Record<string, ChatMessage[]>
   approvalsById: Record<string, ToolApproval>
   turnsById: Record<string, TurnViewState>
@@ -25,6 +32,7 @@ export function createInitialAppStoreData(): AppStoreData {
     endpoint: null,
     providerAccounts: [],
     sessions: [],
+    recentWorkspaces: [],
     messagesBySession: {},
     approvalsById: {},
     turnsById: {},

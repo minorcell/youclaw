@@ -200,6 +200,7 @@ export function AppLayout() {
     const createSessionRequest = (async () => {
       const created = await getAppClient().request<{ id: string }>('sessions.create', {
         provider_profile_id: providerForNewSession?.id ?? null,
+        workspace_path: activeSession?.workspace_path ?? null,
       })
       return created.id
     })()

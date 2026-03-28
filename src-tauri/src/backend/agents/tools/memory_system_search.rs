@@ -1,49 +1,43 @@
-//! `memory_search` 工具定义。
-//!
-//! 面向记忆索引做召回，适合“先搜再读”的调用模式。
+//! `memory_system_search` tool definition.
 
 use aquaregia::tool::{tool, Tool, ToolExecError};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::backend::models::requests::MemorySearchRequest;
+use crate::backend::models::requests::MemorySystemSearchRequest;
 use crate::backend::services::MemoryService;
 
 #[derive(Debug, Deserialize)]
-struct MemorySearchToolArgs {
-    /// 搜索关键词
+struct MemorySystemSearchToolArgs {
     query: String,
-    /// 返回条数上限
     #[serde(default, rename = "maxResults")]
     max_results: Option<u32>,
-    /// 最低相似度阈值
     #[serde(default, rename = "minScore")]
     min_score: Option<f32>,
 }
 
-/// 构建 `memory_search` 工具。
-///
-/// 用于在 MEMORY.md / memory/*.md 的索引中检索。
-pub fn build_memory_search_tool(memory: MemoryService) -> Tool {
-    tool("memory_search")
-        .description("先搜后读：搜索 MEMORY.md/memory/*.md。参数：query，可选 max_results / min_score。")
+pub fn build_memory_system_search_tool(memory: MemoryService) -> Tool {
+    tool("memory_system_search")
+        .description(
+            "Search your long-term memory. Use this before answering questions about anything you might have been told before — people, events, preferences, or past conversations.",
+        )
         .raw_schema(json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
-                "query": { "type": "string", "description": "搜索关键词。" },
-                "maxResults": { "type": ["integer", "null"], "minimum": 1, "maximum": 100, "description": "返回条数上限（可选）。" },
-                "minScore": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "最低相似度阈值（可选）。" }
+                "query": { "type": "string", "description": "Search query." },
+                "maxResults": { "type": ["integer", "null"], "minimum": 1, "maximum": 100, "description": "Maximum number of results." },
+                "minScore": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Minimum match score." }
             },
             "required": ["query"]
         }))
         .execute_raw(move |value| {
             let memory = memory.clone();
             async move {
-                let args = serde_json::from_value::<MemorySearchToolArgs>(value)
+                let args = serde_json::from_value::<MemorySystemSearchToolArgs>(value)
                     .map_err(|err| ToolExecError::Execution(format!("invalid args: {err}")))?;
                 let payload = memory
-                    .search(MemorySearchRequest {
+                    .search(MemorySystemSearchRequest {
                         query: args.query,
                         max_results: args.max_results,
                         min_score: args.min_score,

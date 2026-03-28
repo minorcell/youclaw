@@ -18,7 +18,6 @@ impl AgentRuntimeService {
     pub fn bootstrap(&self) -> AppResult<BootstrapPayload> {
         let mut payload = self.storage.load_bootstrap()?;
         payload.agent_config = self.storage.get_agent_config()?;
-        payload.workspace_files = self.workspace.list_files()?;
         Ok(payload)
     }
 
@@ -31,7 +30,7 @@ impl AgentRuntimeService {
         req: AgentConfigUpdateRequest,
     ) -> AppResult<AgentConfigPayload> {
         let updated = self.storage.update_agent_config(req)?;
-        self.workspace.install_templates(&updated.language, true)?;
+        self.workspace.install_templates()?;
         Ok(updated)
     }
 }

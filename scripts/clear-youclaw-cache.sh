@@ -3,15 +3,14 @@
 set -euo pipefail
 
 APP_ID="com.mcell.youclaw"
-APP_NAME="YouClaw"
-APP_SLUG="youclaw"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 IS_DRY_RUN=false
 
 print_usage() {
   printf 'Usage: %s [--dry-run]\n' "${0##*/}"
+  printf '\n'
+  printf 'Reset current-platform YouClaw local state.\n'
+  printf 'This removes app data and cache, including app_v2.sqlite, profiles, memory, and internal AGENTS workspace.\n'
 }
 
 while [[ "$#" -gt 0 ]]; do
@@ -38,28 +37,41 @@ if [[ -z "${HOME:-}" ]]; then
   exit 1
 fi
 
-XDG_DATA_HOME_VALUE="${XDG_DATA_HOME:-$HOME/.local/share}"
-XDG_CACHE_HOME_VALUE="${XDG_CACHE_HOME:-$HOME/.cache}"
-WINDOWS_ROAMING_DIR="${APPDATA:-$HOME/AppData/Roaming}"
-WINDOWS_LOCAL_DIR="${LOCALAPPDATA:-$HOME/AppData/Local}"
+case "$(uname -s)" in
+  Darwin)
+    TARGET_DIRS=(
+      "$HOME/Library/Application Support/${APP_ID}"
+      "$HOME/Library/Caches/${APP_ID}"
+    )
+    PLATFORM_LABEL="macOS"
+    ;;
+  Linux)
+    XDG_DATA_HOME_VALUE="${XDG_DATA_HOME:-$HOME/.local/share}"
+    XDG_CACHE_HOME_VALUE="${XDG_CACHE_HOME:-$HOME/.cache}"
+    TARGET_DIRS=(
+      "$XDG_DATA_HOME_VALUE/${APP_ID}"
+      "$XDG_CACHE_HOME_VALUE/${APP_ID}"
+    )
+    PLATFORM_LABEL="Linux"
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    WINDOWS_ROAMING_DIR="${APPDATA:-$HOME/AppData/Roaming}"
+    WINDOWS_LOCAL_DIR="${LOCALAPPDATA:-$HOME/AppData/Local}"
+    TARGET_DIRS=(
+      "$WINDOWS_ROAMING_DIR/${APP_ID}"
+      "$WINDOWS_LOCAL_DIR/${APP_ID}"
+    )
+    PLATFORM_LABEL="Windows"
+    ;;
+  *)
+    printf "Unsupported platform: %s\n" "$(uname -s)" >&2
+    exit 1
+    ;;
+esac
 
-TARGET_DIRS=(
-  "$REPO_ROOT/.${APP_SLUG}-data"
-  "$HOME/Library/Application Support/${APP_ID}"
-  "$HOME/Library/Caches/${APP_ID}"
-  "$HOME/Library/Application Support/${APP_NAME}"
-  "$HOME/Library/Caches/${APP_NAME}"
-  "$XDG_DATA_HOME_VALUE/${APP_ID}"
-  "$XDG_CACHE_HOME_VALUE/${APP_ID}"
-  "$XDG_DATA_HOME_VALUE/${APP_NAME}"
-  "$XDG_CACHE_HOME_VALUE/${APP_NAME}"
-  "$WINDOWS_ROAMING_DIR/${APP_ID}"
-  "$WINDOWS_LOCAL_DIR/${APP_ID}"
-  "$WINDOWS_ROAMING_DIR/${APP_NAME}"
-  "$WINDOWS_LOCAL_DIR/${APP_NAME}"
-)
-
-printf "YouClaw cache cleanup%s\n" "$([[ "$IS_DRY_RUN" == "true" ]] && printf " (dry-run)")"
+printf "YouClaw local state reset for %s%s\n" \
+  "$PLATFORM_LABEL" \
+  "$([[ "$IS_DRY_RUN" == "true" ]] && printf " (dry-run)")"
 printf "Please close running YouClaw instances before cleanup.\n"
 
 REMOVED_COUNT=0
@@ -83,5 +95,5 @@ done
 if [[ "$IS_DRY_RUN" == "true" ]]; then
   printf "dry-run completed.\n"
 else
-  printf "cleanup completed, removed %d directories.\n" "$REMOVED_COUNT"
+  printf "reset completed, removed %d directories.\n" "$REMOVED_COUNT"
 fi

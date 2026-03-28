@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { Navigate, useParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 
 import { ChatComposer } from '@/pages/chat/components/chat-composer'
+import { ChatStartPage } from '@/pages/chat/components/chat-start-page'
 import { MessageThread } from '@/pages/chat/components/message-thread'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useToastContext } from '@/contexts/toast-context'
 import { getAppClient } from '@/lib/app-client'
 import { flattenProviderProfiles } from '@/lib/provider-profiles'
-import type { ChatMessage, ProviderProfile, SessionApprovalMode } from '@/lib/types'
+import type {
+  ChatMessage,
+  ProviderProfile,
+  SessionApprovalMode,
+} from '@/lib/types'
 import { buildTurnRenderUnits } from '@/pages/chat/adapters/build-turn-render-units'
 import { useChatScroll } from '@/pages/chat/hooks/use-chat-scroll'
 import { usePersistedTurnSteps } from '@/pages/chat/hooks/use-persisted-turn-steps'
@@ -22,18 +29,43 @@ const EMPTY_TURNS: TurnViewState[] = []
 
 export function ChatPage() {
   const params = useParams<{ sessionId: string }>()
-  const sessionId = params.sessionId ?? null
+  const routeSessionId = params.sessionId ?? null
   const { error: toastError } = useToastContext()
 
-  const { providerAccounts, sessions, approvalsById, setActiveSession, clearError } = useAppStore(
+  const {
+    activeSessionId: storedActiveSessionId,
+    providerAccounts,
+    sessions,
+    approvalsById,
+    recentWorkspaces,
+    lastOpenedSessionId,
+    setActiveSession,
+    clearError,
+  } = useAppStore(
     useShallow((state) => ({
+      activeSessionId: state.activeSessionId,
       providerAccounts: state.providerAccounts,
       sessions: state.sessions,
       approvalsById: state.approvalsById,
+      recentWorkspaces: state.recentWorkspaces,
+      lastOpenedSessionId: state.lastOpenedSessionId,
       setActiveSession: state.setActiveSession,
       clearError: state.clearError,
     })),
   )
+
+  const sessionId = useMemo(() => {
+    if (routeSessionId && sessions.some((session) => session.id === routeSessionId)) {
+      return routeSessionId
+    }
+
+    return (
+      [storedActiveSessionId, lastOpenedSessionId, sessions[0]?.id].find(
+        (candidate): candidate is string =>
+          Boolean(candidate) && sessions.some((session) => session.id === candidate),
+      ) ?? null
+    )
+  }, [routeSessionId, storedActiveSessionId, lastOpenedSessionId, sessions])
 
   const messages = useAppStore((state) =>
     sessionId ? (state.messagesBySession[sessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
@@ -60,6 +92,7 @@ export function ChatPage() {
 
   const [input, setInput] = useState('')
   const [approvalModeBusy, setApprovalModeBusy] = useState(false)
+  const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const persistedStepsByTurnId = usePersistedTurnSteps(activeTurnId)
 
   const activeSession = useMemo(
@@ -93,6 +126,15 @@ export function ChatPage() {
       .sort((left, right) => right.created_at.localeCompare(left.created_at))
   }, [approvalsById, sessionId])
 
+  const hasRenderableMessages = useMemo(
+    () => messages.some((message) => message.role !== 'system'),
+    [messages],
+  )
+  const showStartPage =
+    !!activeSession &&
+    !hasRenderableMessages &&
+    turnRenderUnits.length === 0 &&
+    pendingApprovals.length === 0
   const isTurnRunning = activeTurnStatus === 'running'
 
   useEffect(() => {
@@ -105,6 +147,10 @@ export function ChatPage() {
     return <Navigate replace to='/welcome/provider' />
   }
 
+  if (sessionId && routeSessionId !== sessionId) {
+    return <Navigate replace to={`/chat/${sessionId}`} />
+  }
+
   if (!activeSession) {
     return <Navigate replace to='/' />
   }
@@ -113,7 +159,7 @@ export function ChatPage() {
 
   async function handleSend() {
     const text = input.trim()
-    if (!text) return
+    if (!text || !activeSession?.workspace_path) return
     setInput('')
     resetAutoScroll()
     clearError()
@@ -155,6 +201,37 @@ export function ChatPage() {
     })
   }
 
+  async function handleWorkspaceChange(workspacePath: string) {
+    if (!activeSession || workspaceBusy) return
+    setWorkspaceBusy(true)
+    try {
+      await getAppClient().request('sessions.update_workspace', {
+        session_id: activeSession.id,
+        workspace_path: workspacePath,
+      })
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkspaceBusy(false)
+    }
+  }
+
+  async function handleBrowseWorkspace() {
+    if (!activeSession || workspaceBusy || !isTauri()) return
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: activeSession.workspace_path ?? undefined,
+      })
+      if (typeof selected === 'string' && selected.length > 0) {
+        await handleWorkspaceChange(selected)
+      }
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   async function handleCancelTurn() {
     if (!activeTurnId || !isTurnRunning) return
     await getAppClient().request('chat.turn.cancel', {
@@ -172,18 +249,22 @@ export function ChatPage() {
           viewportRef={scrollContainerRef}
         >
           <div className='px-6 pb-72 pt-8 md:px-[9%]'>
-            <div className='select-text'>
-              <MessageThread
-                providerLabel={
-                  activeProvider
-                    ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
-                    : 'YouClaw Agent'
-                }
-                turns={turnRenderUnits}
-              />
-            </div>
+            {showStartPage ? (
+              <ChatStartPage />
+            ) : (
+              <div className='select-text'>
+                <MessageThread
+                  providerLabel={
+                    activeProvider
+                      ? `${activeProvider.name} / ${activeProvider.model_name || activeProvider.model}`
+                      : 'YouClaw Agent'
+                  }
+                  turns={turnRenderUnits}
+                />
+              </div>
+            )}
 
-            {pendingApprovals.length > 0 ? (
+            {!showStartPage && pendingApprovals.length > 0 ? (
               <div className='mt-6 space-y-3 select-text'>
                 {pendingApprovals.map((approval) => (
                   <ToolApprovalCard
@@ -211,7 +292,12 @@ export function ChatPage() {
               onInputChange={setInput}
               onSend={() => void handleSend()}
               providers={providers}
+              recentWorkspaces={recentWorkspaces}
               selectedProviderId={activeSession.provider_profile_id}
+              workspaceBusy={workspaceBusy}
+              workspacePath={activeSession.workspace_path ?? null}
+              onBrowseWorkspace={() => void handleBrowseWorkspace()}
+              onSelectWorkspace={(path) => void handleWorkspaceChange(path)}
               isTurnRunning={isTurnRunning}
             />
           </div>

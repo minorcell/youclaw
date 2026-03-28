@@ -35,7 +35,6 @@ pub struct ToolRuntimeContext {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolApprovalMode {
-    Never,
     Default,
 }
 
@@ -63,7 +62,6 @@ impl ToolApprovalOutcome {
 impl ToolRuntimeContext {
     fn should_require_approval(&self, mode: ToolApprovalMode) -> bool {
         match mode {
-            ToolApprovalMode::Never => false,
             ToolApprovalMode::Default => {
                 !matches!(self.approval_mode, SessionApprovalMode::FullAccess)
             }

@@ -20,6 +20,7 @@ impl StorageService {
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 provider_profile_id TEXT,
+                workspace_path TEXT,
                 approval_mode TEXT NOT NULL DEFAULT 'default',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -144,7 +145,7 @@ impl StorageService {
             );
             CREATE TABLE IF NOT EXISTS session_memory_state (
                 session_id TEXT PRIMARY KEY,
-                compressed_summary TEXT NOT NULL DEFAULT '',
+                summary_json TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS message_marks (
@@ -153,29 +154,26 @@ impl StorageService {
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (message_id, mark)
             );
-            CREATE TABLE IF NOT EXISTS memory_chunks (
-                id TEXT PRIMARY KEY,
-                path TEXT NOT NULL,
-                line_start INTEGER NOT NULL,
-                line_end INTEGER NOT NULL,
-                heading TEXT,
-                content TEXT NOT NULL,
-                file_hash TEXT NOT NULL DEFAULT '',
-                source TEXT NOT NULL DEFAULT 'memory',
+            CREATE TABLE IF NOT EXISTS workspace_roots (
+                path TEXT PRIMARY KEY,
+                last_used_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS agent_profiles (
+                target TEXT PRIMARY KEY,
+                content TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS memory_source_files (
-                path TEXT PRIMARY KEY,
-                file_hash TEXT NOT NULL,
-                file_size INTEGER NOT NULL,
-                mtime_ms INTEGER NOT NULL,
-                indexed_at TEXT NOT NULL,
-                source TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS memory_entries (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
-            CREATE VIRTUAL TABLE IF NOT EXISTS memory_chunks_fts USING fts5(
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_entries_fts USING fts5(
                 id UNINDEXED,
-                path UNINDEXED,
-                heading,
+                title,
                 content
             );
             CREATE INDEX IF NOT EXISTS idx_turn_usage_metrics_started_at
@@ -196,20 +194,23 @@ impl StorageService {
             ON chat_sessions (archived_at, last_turn_at DESC, updated_at DESC, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_message_marks_mark
             ON message_marks (mark, message_id);
-            CREATE INDEX IF NOT EXISTS idx_memory_chunks_path
-            ON memory_chunks (path);
-            CREATE INDEX IF NOT EXISTS idx_memory_source_files_source
-            ON memory_source_files (source);
+            CREATE INDEX IF NOT EXISTS idx_workspace_roots_last_used_at
+            ON workspace_roots (last_used_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_entries_updated_at
+            ON memory_entries (updated_at DESC, created_at DESC);
             ",
         )?;
         ensure_chat_sessions_approval_mode_column(&conn)?;
+        ensure_chat_sessions_workspace_path_column(&conn)?;
         ensure_turn_tool_metrics_detail_columns(&conn)?;
+        ensure_session_memory_state_summary_json(&conn)?;
         conn.execute(
             "INSERT OR IGNORE INTO agent_settings (
                 id, max_steps, max_input_tokens, compact_ratio, language, updated_at
              ) VALUES (1, 64, 120000, 0.8, 'zh', ?1)",
             [now_timestamp()],
         )?;
+        seed_default_agent_profiles(&conn)?;
         Ok(())
     }
 
@@ -238,6 +239,36 @@ fn ensure_chat_sessions_approval_mode_column(conn: &Connection) -> AppResult<()>
     Ok(())
 }
 
+fn ensure_chat_sessions_workspace_path_column(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(chat_sessions)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let has_workspace_path = columns
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .any(|column| column == "workspace_path");
+
+    if !has_workspace_path {
+        conn.execute(
+            "ALTER TABLE chat_sessions ADD COLUMN workspace_path TEXT",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn seed_default_agent_profiles(conn: &Connection) -> AppResult<()> {
+    let now = now_timestamp();
+    for target in ["user", "soul"] {
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_profiles (target, content, created_at, updated_at)
+             VALUES (?1, '', ?2, ?2)",
+            params![target, now],
+        )?;
+    }
+    Ok(())
+}
+
 fn ensure_turn_tool_metrics_detail_columns(conn: &Connection) -> AppResult<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(turn_tool_metrics)")?;
     let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -254,5 +285,26 @@ fn ensure_turn_tool_metrics_detail_columns(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    Ok(())
+}
+
+fn ensure_session_memory_state_summary_json(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(session_memory_state)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = columns.collect::<Result<Vec<_>, _>>()?;
+
+    if existing.iter().any(|column| column == "summary_json") {
+        return Ok(());
+    }
+
+    conn.execute("DROP TABLE IF EXISTS session_memory_state", [])?;
+    conn.execute(
+        "CREATE TABLE session_memory_state (
+            session_id TEXT PRIMARY KEY,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
     Ok(())
 }

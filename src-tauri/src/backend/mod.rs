@@ -18,7 +18,7 @@ use agents::workspace::AgentWorkspace;
 pub use errors::{AppError, AppResult};
 use models::*;
 use services::{
-    AgentRuntimeService, MemoryService, ProviderService, SessionService, WorkspaceService,
+    AgentRuntimeService, MemoryService, ProfileService, ProviderService, SessionService,
 };
 pub use storage::StorageService;
 
@@ -116,8 +116,7 @@ impl BackendState {
         let storage = StorageService::new(base_dir)?;
         let workspace = AgentWorkspace::new(storage.base_dir());
         workspace.ensure_layout()?;
-        let config = storage.get_agent_config()?;
-        workspace.install_templates(&config.language, true)?;
+        workspace.install_templates()?;
         let ws_hub = WsHub::new();
         let approvals = ApprovalService::new(storage.clone());
         let state = Self {
@@ -127,7 +126,6 @@ impl BackendState {
             approvals,
             active_turns: Arc::new(Mutex::new(HashMap::new())),
         };
-        let _ = state.memory_service().reindex();
         Ok(state)
     }
 
@@ -148,11 +146,11 @@ impl BackendState {
     }
 
     pub(crate) fn memory_service(&self) -> MemoryService {
-        MemoryService::new(self.storage.clone(), self.workspace.root().to_path_buf())
+        MemoryService::new(self.storage.clone())
     }
 
-    pub(crate) fn workspace_service(&self) -> WorkspaceService {
-        WorkspaceService::new(self.workspace.clone(), self.memory_service())
+    pub(crate) fn profile_service(&self) -> ProfileService {
+        ProfileService::new(self.storage.clone())
     }
 
     pub fn register_turn(&self, turn_id: String) {

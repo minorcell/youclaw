@@ -80,6 +80,7 @@ function CreateSessionAndRedirect({
       try {
         const created = await getAppClient().request<{ id: string }>('sessions.create', {
           provider_profile_id: providerProfileId,
+          workspace_path: null,
         })
 
         if (cancelled) return

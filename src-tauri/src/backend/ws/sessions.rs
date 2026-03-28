@@ -2,6 +2,7 @@ use crate::backend::errors::AppResult;
 use crate::backend::models::requests::{
     BindSessionProviderRequest, CreateSessionRequest, DeleteSessionRequest, PurgeSessionRequest,
     RenameSessionRequest, RestoreSessionRequest, UpdateSessionApprovalModeRequest,
+    UpdateSessionWorkspaceRequest,
 };
 use crate::backend::models::WsEnvelope;
 use crate::backend::BackendState;
@@ -26,7 +27,9 @@ pub(super) fn try_handle(
             WsEnvelope::response_ok(
                 envelope.id.clone(),
                 envelope.name.clone(),
-                state.session_service().create(req.provider_profile_id)?,
+                state
+                    .session_service()
+                    .create(req.provider_profile_id, req.workspace_path)?,
             )?
         }
         "sessions.delete" => {
@@ -86,6 +89,18 @@ pub(super) fn try_handle(
             state
                 .session_service()
                 .update_approval_mode(&req.session_id, req.approval_mode)?;
+            WsEnvelope::response_ok(
+                envelope.id.clone(),
+                envelope.name.clone(),
+                serde_json::json!({ "updated": true }),
+            )?
+        }
+        "sessions.update_workspace" => {
+            let req =
+                serde_json::from_value::<UpdateSessionWorkspaceRequest>(envelope.payload.clone())?;
+            state
+                .session_service()
+                .update_workspace(&req.session_id, &req.workspace_path)?;
             WsEnvelope::response_ok(
                 envelope.id.clone(),
                 envelope.name.clone(),

@@ -54,6 +54,7 @@ export interface ChatSession {
   id: string
   title: string
   provider_profile_id: string | null
+  workspace_path?: string | null
   approval_mode: SessionApprovalMode
   created_at: string
   updated_at: string
@@ -123,10 +124,40 @@ export interface AgentConfigPayload {
   language: string
 }
 
-export interface WorkspaceFileInfo {
+export interface WorkspaceRootInfo {
   path: string
-  size: number
-  modified_at: string
+  last_used_at: string
+}
+
+export type ProfileTarget = 'user' | 'soul'
+
+export interface AgentProfile {
+  target: ProfileTarget
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoryRecord {
+  id: string
+  title: string
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoryRecordSummary {
+  id: string
+  title: string
+  preview: string
+  updated_at: string
+}
+
+export interface MemorySystemSearchHit {
+  id: string
+  title: string
+  snippet: string
+  score: number
 }
 
 export interface Usage {
@@ -168,12 +199,12 @@ export interface BootstrapPayload {
   provider_profiles: ProviderProfile[]
   provider_accounts: ProviderAccount[]
   sessions: ChatSession[]
+  recent_workspaces?: WorkspaceRootInfo[]
   messages: ChatMessage[]
   approvals: ToolApproval[]
   turns: ChatTurn[]
   last_opened_session_id: string | null
   agent_config: AgentConfigPayload
-  workspace_files: WorkspaceFileInfo[]
 }
 
 export interface ProvidersChangedPayload {
@@ -184,6 +215,7 @@ export interface ProvidersChangedPayload {
 export interface SessionsChangedPayload {
   sessions: ChatSession[]
   last_opened_session_id: string | null
+  recent_workspaces?: WorkspaceRootInfo[]
 }
 
 export interface ArchivedSessionsPayload {
